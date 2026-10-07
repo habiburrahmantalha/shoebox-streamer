@@ -46,10 +46,43 @@ shoebox            # serves the current folder
 shoebox ~/Videos   # or any folder
 ```
 
-## Features
+## macOS desktop app
 
-**macOS app (from source).** Run `npm run build:macos` to create a standalone `dist/Shoebox.app`
-with a native folder picker and bundled playback tools. See [macOS build and distribution](docs/macos.md).
+Requires macOS 13 or later. The Apple Silicon build runs natively without Rosetta.
+To build from this checkout, install Node.js 22+ and Xcode Command Line Tools, then run:
+
+```sh
+npm ci --ignore-scripts
+npm run build:macos
+open dist/Shoebox.app
+```
+
+The build creates `dist/Shoebox.app` and a ZIP archive. Build on Apple Silicon for arm64;
+Intel Macs need a separate build, which has not yet been validated.
+
+To install, drag `dist/Shoebox.app` into **Applications**, then launch **Shoebox** from
+Applications or Spotlight. The built app bundles Node.js, FFmpeg, FFprobe, and its dependencies;
+running it does not require Node, Bun, Homebrew, or this checkout.
+
+Choose your video folder in the welcome window. Use **File → Open Video Folder…** (⌘O)
+to change it. Shoebox includes subfolders and remembers the last selected folder.
+Close the last window or press ⌘Q to quit the app and its server.
+
+The desktop app serves only this Mac at `127.0.0.1:7172`. To stream to an iPad, phone,
+or TV on the same network, use browser mode from the checkout:
+
+```sh
+npm start -- "/path/to/videos"
+```
+
+Open the printed network address on the other device. Browser mode allows devices on your
+network to access the selected library by default.
+
+The desktop build is currently ad-hoc signed for local use. Public distribution requires
+Developer ID signing and notarization. See [macOS build and distribution](docs/macos.md)
+for validation details and known limitations.
+
+## Features
 
 **Your folder, organized.** Shoebox recognizes episodes and groups them into shows with seasons, in the right order,
 however they're named: `Show.S01E02.mkv`, `shows01e02.mp4`, `1x02`, `Season 1/03.mkv`, `[Group] Show - 02 (1080p).mkv`.
