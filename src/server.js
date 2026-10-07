@@ -431,6 +431,12 @@ export function createApp({ library, artwork, torrents, subtitles, info, log }) 
   });
 
   const server = http.createServer(async (req, res) => {
+    if (process.env.SHOEBOX_DESKTOP_READY) {
+      const host = `127.0.0.1:${req.socket.localPort}`;
+      if (req.headers.host !== host ||
+          (req.headers.origin && req.headers.origin !== `http://${host}`) ||
+          req.headers['sec-fetch-site'] === 'cross-site') return send(res, 403, 'forbidden');
+    }
     const url = new URL(req.url, 'http://x');
     try {
       for (const r of routes) {

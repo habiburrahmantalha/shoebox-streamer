@@ -4,6 +4,19 @@ All notable changes to this project are documented here. Shoebox follows [Semant
 patch releases for fixes, minor releases for new features, and a major release for breaking changes
 (CLI flags, config format, or URLs that other devices may have saved).
 
+## [0.4.0] - 2026-10-07
+
+### Added
+- Standalone macOS app with a native folder picker, remembered library, embedded web player,
+  bundled Node.js/FFmpeg/FFprobe, native dialogs and downloads, and managed server lifetime.
+- `npm run build:macos` builds a macOS application for the build machine's architecture.
+
+### Fixed
+- Loopback-only servers no longer advertise unreachable LAN addresses or mDNS names.
+- Watch history is kept separately for each library folder, preserving existing history on upgrade.
+- Background FFmpeg/FFprobe jobs are stopped when the server exits.
+- Picture-in-picture controls are shown only when the loaded video supports the feature.
+
 ## [0.3.0] - 2026-10-07
 
 ### Changed

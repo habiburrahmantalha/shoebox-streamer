@@ -19,6 +19,7 @@ const state = {
 // ------------------------------------------------------------------ data
 async function loadLibrary() {
   const lib = await api('/api/library');
+  store.useLibrary(lib.root);
   state.lib = lib;
   state.items = new Map(lib.items.map((i) => [i.id, i]));
   state.shows = new Map(lib.shows.map((s) => [s.id, s]));

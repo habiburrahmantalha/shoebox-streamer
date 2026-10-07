@@ -30,10 +30,17 @@ function resolveBinary(name, envVar, pkg) {
 export const FFMPEG = resolveBinary('ffmpeg', 'SHOEBOX_FFMPEG', 'ffmpeg-static');
 export const FFPROBE = resolveBinary('ffprobe', 'SHOEBOX_FFPROBE', 'ffprobe-static');
 
+const jobs = new Set();
+process.once('exit', () => {
+  for (const job of jobs) job.kill('SIGKILL');
+});
+
 /** Run a binary, collecting stdout. Rejects on non-zero exit. */
 export function run(bin, args, { timeout = 0, maxBuffer = 64 * 1024 * 1024 } = {}) {
   return new Promise((resolve, reject) => {
     const p = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    jobs.add(p);
+    p.once('close', () => jobs.delete(p));
     const out = [];
     let size = 0;
     let err = '';

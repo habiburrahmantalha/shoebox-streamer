@@ -1,6 +1,6 @@
 // Per-browser persistence: watch progress and settings (localStorage, failure-tolerant).
 
-const P_KEY = 'shoebox:progress';
+let P_KEY = 'shoebox:progress';
 const S_KEY = 'shoebox:settings';
 
 function read(key, fallback) {
@@ -17,6 +17,19 @@ function write(key, val) {
 }
 
 let progress = read(P_KEY, {});
+
+export function useLibrary(root) {
+  const key = `shoebox:progress:${root}`;
+  if (key === P_KEY) return;
+  // Attribute legacy history to the first library opened after upgrading.
+  const migrated = read('shoebox:progress-library', null);
+  progress = read(key, migrated === null ? read('shoebox:progress', {}) : {});
+  if (migrated === null) {
+    write(key, progress);
+    write('shoebox:progress-library', root);
+  }
+  P_KEY = key;
+}
 
 export const WATCHED_AT = 0.92;
 

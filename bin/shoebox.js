@@ -148,6 +148,7 @@ const torrents = new Torrents({ library, getPort: () => port, log });
 let mdns = null;
 
 function lanAddresses() {
+  if (opts.host === '127.0.0.1' || opts.host === '::1' || opts.host === 'localhost') return [];
   const out = [];
   for (const [name, list] of Object.entries(os.networkInterfaces())) {
     for (const a of list || []) {
@@ -178,7 +179,7 @@ function listen(p, attempts = 20) {
     };
     const onListening = () => {
       app.server.off('error', onError);
-      resolve(p);
+      resolve(app.server.address().port);
     };
     app.server.once('error', onError);
     app.server.once('listening', onListening);
@@ -193,7 +194,12 @@ try {
   process.exit(1);
 }
 
-if (config.mdns) mdns = publish({ name: config.name, port, log: (m) => log(m, true) });
+if (config.mdns && lanAddresses().length) mdns = publish({ name: config.name, port, log: (m) => log(m, true) });
+
+// The desktop shell owns this temporary file; it never guesses readiness from logs.
+if (process.env.SHOEBOX_DESKTOP_READY) {
+  fs.writeFileSync(process.env.SHOEBOX_DESKTOP_READY, JSON.stringify({ port, root }));
+}
 
 const urls = info().urls;
 const primary = mdns ? `http://${mdns.host}:${port}` : urls[0] || `http://localhost:${port}`;

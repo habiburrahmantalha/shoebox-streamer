@@ -48,6 +48,9 @@ shoebox ~/Videos   # or any folder
 
 ## Features
 
+**macOS app (from source).** Run `npm run build:macos` to create a standalone `dist/Shoebox.app`
+with a native folder picker and bundled playback tools. See [macOS build and distribution](docs/macos.md).
+
 **Your folder, organized.** Shoebox recognizes episodes and groups them into shows with seasons, in the right order,
 however they're named: `Show.S01E02.mkv`, `shows01e02.mp4`, `1x02`, `Season 1/03.mkv`, `[Group] Show - 02 (1080p).mkv`.
 Movies get posters and shows get episode thumbnails. New files appear while it's running.

@@ -1,3 +1,5 @@
 node_modules/
 .shoebox/
 *.log
+dist/
+.macos-cache/

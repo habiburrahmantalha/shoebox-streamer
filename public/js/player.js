@@ -119,7 +119,7 @@ export class Player {
     v.volume = store.getSetting('volume') ?? 1;
     v.muted = !!store.getSetting('muted');
     this.volInput.value = v.muted ? 0 : v.volume;
-    if (!document.pictureInPictureEnabled && !v.webkitSupportsPresentationMode) $('[data-act=pip]', this.el).hidden = true;
+    $('[data-act=pip]', this.el).hidden = true;
     this.updateVolumeIcon();
     this.el.focus();
   }
@@ -370,6 +370,8 @@ export class Player {
   }
 
   onMetadata() {
+    $('[data-act=pip]', this.el).hidden = !document.pictureInPictureEnabled &&
+      !this.video.webkitSupportsPresentationMode?.('picture-in-picture');
     const v = this.video;
     if (this.pendingStart) {
       v.currentTime = this.pendingStart;
