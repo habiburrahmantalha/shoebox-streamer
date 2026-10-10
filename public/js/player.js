@@ -37,7 +37,7 @@ export class Player {
     api('/api/info')
       .then((i) => {
         this.serverSubs = i.subtitles;
-        if (this.item && this.session) {
+        if (!this.destroyed && this.item && this.session) {
           // Info arrived after playback started: re-evaluate the pick and auto-download.
           if (!this.subKey) this.setSubtitle(this.chooseSubtitle()?.key || null, false);
           this.autoSubtitles();
@@ -267,6 +267,7 @@ export class Player {
 
   // ---------------------------------------------------------------- loading
   async load(item) {
+    if (this.destroyed) return;
     if (this.item) this.saveProgress(true);
     if (this.item?.id !== item.id) {
       this.subKey = null;
@@ -285,6 +286,7 @@ export class Player {
     const p = store.getProgress(item.id);
     const startAt = store.inProgress(item.id) ? p.t : 0;
     await this.start({ startAt, autoplay: true });
+    if (this.destroyed || this.item !== item) return;
     this.autoSubtitles();
     if (startAt > 0) {
       toast(`Resumed at ${fmtTime(startAt)}`, { action: 'Start over', onAction: () => this.seek(0) });
@@ -293,6 +295,7 @@ export class Player {
   }
 
   async start({ startAt = 0, autoplay = true, force = null } = {}) {
+    if (this.destroyed) return;
     const item = this.item;
     this.el.classList.add('loading');
     let res;
@@ -308,9 +311,10 @@ export class Player {
         }),
       });
     } catch (e) {
-      return this.showError(e.message);
+      if (!this.destroyed && this.item === item) this.showError(e.message);
+      return;
     }
-    if (this.item !== item) return; // switched while waiting
+    if (this.destroyed || this.item !== item) return; // closed or switched while waiting
     this.session = res;
     if (this.audio == null) this.audio = res.audio;
     this.renderBadge();
@@ -356,7 +360,7 @@ export class Player {
         this.syncPlayState();
       }
     }
-    this.updateMediaSession();
+    if (!this.destroyed && this.item === item) this.updateMediaSession();
   }
 
   teardownSource() {
@@ -400,6 +404,7 @@ export class Player {
   }
 
   fallback(why) {
+    if (this.destroyed) return;
     if (this.fallbackTried) return this.showError(`This device can't play the file (${why}).`);
     this.fallbackTried = true;
     console.info('[shoebox] direct play failed, switching to server conversion:', why);
@@ -520,10 +525,12 @@ export class Player {
   }
 
   goNext() {
+    if (this.destroyed) return;
     const s = this.siblings();
     if (s?.next) this.deps.navigate(s.next.id);
   }
   goPrev() {
+    if (this.destroyed) return;
     const s = this.siblings();
     if (this.video.currentTime > 15 || !s?.prev) return this.seek(0);
     this.deps.navigate(s.prev.id);
@@ -1112,8 +1119,11 @@ export class Player {
   }
 
   destroy() {
+    this.destroyed = true;
     this.saveProgress(true);
     clearTimeout(this.idleTimer);
+    clearTimeout(this.tapTimer);
+    clearTimeout(this.flashTimer);
     clearInterval(this.cdTimer);
     for (const fn of this.cleanup || []) fn();
     this.teardownSource();

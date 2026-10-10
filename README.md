@@ -82,6 +82,35 @@ The desktop build is currently ad-hoc signed for local use. Public distribution 
 Developer ID signing and notarization. See [macOS build and distribution](docs/macos.md)
 for validation details and known limitations.
 
+## iPad app and Mac server
+
+The native iPad app connects to Shoebox running on your Mac. It requires iPadOS 17+
+and the same Wi-Fi network as the Mac.
+
+Start the server from this checkout on your Mac:
+
+```sh
+./scripts/start-ipad-server.command "/Volumes/Netac/Download"
+```
+
+The script uses the bundled runtime from `dist/Shoebox.app` or `/Applications/Shoebox.app`
+when available; otherwise it uses your installed Node.js and project dependencies.
+It prints the network address and keeps the Mac awake until you press Control-C.
+Devices on your network can access the selected library without a password, so use trusted Wi-Fi.
+You can also double-click the script in Finder and paste a folder path when prompted.
+
+To install the iPad app, open `ipad/Shoebox.xcodeproj` in Xcode, select your signing team
+and connected iPad, then click Run. Allow local network access and tap your Mac under
+**Nearby servers**. If discovery is unavailable, enter the printed **On your LAN** address
+under **Manual server address** and tap **Connect**.
+Safari can use the same address without installing the app.
+
+```sh
+npm run build:ipad  # build for the simulator without an Apple account
+```
+
+See [iPad setup and testing](docs/ipad.md) for signing, build checks, and troubleshooting.
+
 ## Features
 
 **Your folder, organized.** Shoebox recognizes episodes and groups them into shows with seasons, in the right order,

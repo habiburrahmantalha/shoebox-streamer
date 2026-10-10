@@ -21,6 +21,12 @@ export function html(strings, ...vals) {
 }
 export const raw = (s) => ({ __raw: true, s });
 
+export function playerBackHash(view) {
+  if (view?.name === 'show') return `#/show/${view.id}${view.season != null ? `/${view.season}` : ''}`;
+  if (view?.name === 'torrents') return '#/torrents';
+  return '#/';
+}
+
 export function fmtTime(sec) {
   if (!isFinite(sec) || sec < 0) sec = 0;
   sec = Math.floor(sec);

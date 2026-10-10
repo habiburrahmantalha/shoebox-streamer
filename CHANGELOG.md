@@ -4,6 +4,19 @@ All notable changes to this project are documented here. Shoebox follows [Semant
 patch releases for fixes, minor releases for new features, and a major release for breaking changes
 (CLI flags, config format, or URLs that other devices may have saved).
 
+## [0.5.0] - 2026-10-11
+
+### Added
+- Native iPad client with a saved Mac server address and the existing streaming player.
+- Mac launcher script to share a selected video folder with an iPad and prevent idle sleep.
+- iPad Xcode project, simulator build script, and server address validation checks.
+- Automatic Bonjour discovery on iPad with tap to connect, refresh, and manual address fallback.
+- iPad loading indicators for connecting, reloading, and waiting for the library to initialize.
+
+### Fixed
+- Player Back returns directly to its underlying page instead of relying on WebView history.
+- Closing the player ignores late playback responses and cancels pending tap callbacks.
+
 ## [0.4.0] - 2026-10-07
 
 ### Added

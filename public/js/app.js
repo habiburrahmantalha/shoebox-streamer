@@ -1,4 +1,4 @@
-import { $, $$, html, raw, esc, api, fmtDuration, fmtBytes, fmtTime, epCode, fuzzy, hue, toast, copyText } from './util.js';
+import { $, $$, html, raw, esc, api, fmtDuration, fmtBytes, fmtTime, epCode, fuzzy, hue, toast, copyText, playerBackHash } from './util.js';
 import { icons } from './icons.js';
 import * as store from './store.js';
 import { Player } from './player.js';
@@ -574,9 +574,8 @@ function openPlayerFor(id) {
     externalLinks,
     episodeRow,
     onClose: () => {
-      const it = state.items.get(state.route.id);
-      if (history.length > 1 && lastViewKey) history.back();
-      else location.hash = it?.showId ? `#/show/${it.showId}` : '#/';
+      // WebView history can include blank pages or other watch routes.
+      location.replace(playerBackHash(lastViewKey && JSON.parse(lastViewKey)));
     },
     navigate: (itemId) => location.replace(`#/watch/${itemId}`),
   });
