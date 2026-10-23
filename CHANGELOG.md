@@ -4,6 +4,13 @@ All notable changes to this project are documented here. Shoebox follows [Semant
 patch releases for fixes, minor releases for new features, and a major release for breaking changes
 (CLI flags, config format, or URLs that other devices may have saved).
 
+## [0.5.1] - 2026-10-23
+
+### Fixed
+- Preserve supported AAC/MP3 audio during HLS streaming instead of always re-encoding to stereo.
+- Preserve supported AC-3/E-AC-3 audio through native HLS, with conversion on playback failure.
+- Increase required AAC conversion to 320 kbps and retain mono sources as mono.
+
 ## [0.5.0] - 2026-10-11
 
 ### Added

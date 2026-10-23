@@ -37,6 +37,16 @@ library folder. Folder selection and window geometry use macOS preferences. Serv
 The existing `~/.shoebox.conf` settings still apply, except desktop binding/port/mDNS overrides.
 Media metadata and thumbnails use the existing `.shoebox` cache in the selected folder.
 
+## Audio quality
+
+The embedded WebKit player plays the original file directly when it supports the container,
+video, and selected audio track. Keep Quality on Auto to avoid requesting video conversion.
+MKV and unsupported codecs may still require HLS streaming. Compatible AAC and MP3 audio
+is copied without re-encoding, even when the video needs conversion. Supported AC-3/E-AC-3
+tracks use native HLS to retain their original audio and channel count. If playback fails,
+Shoebox retries with AAC conversion. Other unsupported audio is converted to 320 kbps AAC,
+with at most two channels for compatibility; this fallback cannot retain lossless or surround audio.
+
 ## Validation
 
 ```sh

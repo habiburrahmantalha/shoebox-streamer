@@ -17,16 +17,25 @@ const IDLE_KILL_MS = 90_000;
 const IDLE_DELETE_MS = 20 * 60_000;
 const CAN_PAUSE = process.platform !== 'win32';
 
-/** Parse "c-a0" | "t-720-4000-a1" */
+/** Parse "c-a0" | "t-720-4000-a1", optionally suffixed with "-copy" for original audio. */
 export function parseProfile(s) {
-  let m = /^c-a(\d+)$/.exec(s);
-  if (m) return { mode: 'remux', audio: +m[1] };
-  m = /^t-(\d{3,4})-(\d{3,5})-a(\d+)$/.exec(s);
-  if (m) return { mode: 'transcode', height: +m[1], kbps: +m[2], audio: +m[3] };
+  const copy = s.endsWith('-copy') ? { audioCopy: true } : {};
+  let m = /^c-a(\d+)(?:-copy)?$/.exec(s);
+  if (m) return { mode: 'remux', audio: +m[1], ...copy };
+  m = /^t-(\d{3,4})-(\d{3,5})-a(\d+)(?:-copy)?$/.exec(s);
+  if (m) return { mode: 'transcode', height: +m[1], kbps: +m[2], audio: +m[3], ...copy };
   return null;
 }
 export function profileString(d) {
-  return d.mode === 'remux' ? `c-a${d.audio}` : `t-${d.height}-${d.kbps}-a${d.audio}`;
+  const p = d.mode === 'remux' ? `c-a${d.audio}` : `t-${d.height}-${d.kbps}-a${d.audio}`;
+  return p + (d.audioCopy ? '-copy' : '');
+}
+
+export function audioArgs(probe, profile) {
+  const audio = probe.audio[Math.min(profile.audio, probe.audio.length - 1)];
+  if (!audio) return ['-an'];
+  if (profile.audioCopy && ['aac', 'mp3', 'ac3', 'eac3'].includes(audio.codec)) return ['-c:a', 'copy'];
+  return ['-c:a', 'aac', '-ac', String(Math.min(audio.channels || 2, 2)), '-b:a', '320k'];
 }
 
 function buildSegments(duration, keyframes) {
@@ -100,7 +109,7 @@ class Session {
       args.push('-force_key_frames', `expr:gte(t,${srcStart.toFixed(3)}+n_forced*${TRANSCODE_SEG})`);
       if (encoder === 'libx264') args.push('-sc_threshold', '0');
     }
-    args.push('-c:a', 'aac', '-ac', '2', '-b:a', '192k');
+    args.push(...audioArgs(probe, p));
 
     const rel = this.segments
       .slice(n + 1)

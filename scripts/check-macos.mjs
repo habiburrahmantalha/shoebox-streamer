@@ -28,7 +28,8 @@ let child;
 let log = '';
 try {
   execFileSync(env.SHOEBOX_FFMPEG, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi',
-    '-i', 'testsrc2=size=640x360:rate=24', '-t', '2', '-c:v', 'libx264', '-preset', 'ultrafast',
+    '-i', 'testsrc2=size=640x360:rate=24', '-f', 'lavfi', '-i', 'anoisesrc=sample_rate=48000:seed=1',
+    '-t', '2', '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', '-ac', '6', '-b:a', '384k',
     '-pix_fmt', 'yuv420p', path.join(library, 'Sample.mp4')], { env });
   const probe = JSON.parse(execFileSync(env.SHOEBOX_FFPROBE, ['-v', 'error', '-show_format',
     '-of', 'json', path.join(library, 'Sample.mp4')], { env, encoding: 'utf8' }));
@@ -100,12 +101,34 @@ try {
   assert.ok(segment);
   const segmentURL = new URL(segment, base + converted.url);
   assert.ok((await (await request(segmentURL.pathname)).arrayBuffer()).byteLength >= 188);
+  const preserved = await (await request(`/api/play/${item.id}`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ client: 'macos-audio', caps: { hlsNative: true, audio: { aac: true } } })
+  })).json();
+  assert.equal(preserved.mode, 'transcode');
+  assert.equal(preserved.audioCopy, true);
+  assert.match(preserved.url, /-copy\//);
+  const audioPlaylist = await (await request(preserved.url)).text();
+  const audioSegment = audioPlaylist.split('\n').find(line => line && !line.startsWith('#'));
+  const audioURL = new URL(audioSegment, base + preserved.url);
+  const audioFile = path.join(temporary, 'preserved.ts');
+  await fs.writeFile(audioFile, Buffer.from(await (await request(audioURL.pathname)).arrayBuffer()));
+  const audioProbe = JSON.parse(execFileSync(env.SHOEBOX_FFPROBE, ['-v', 'error', '-select_streams', 'a:0',
+    '-show_streams', '-of', 'json', audioFile], { env, encoding: 'utf8' }));
+  assert.equal(audioProbe.streams[0].codec_name, 'aac');
+  assert.equal(audioProbe.streams[0].channels, 6);
+  const fallback = await (await request(`/api/play/${item.id}`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ client: 'macos-audio', force: 'transcode', caps: { hlsNative: true, audio: { aac: true } } })
+  })).json();
+  assert.equal(fallback.audioCopy, undefined);
+  assert.doesNotMatch(fallback.url, /-copy\//);
   const closed = once(child, 'exit');
   child.kill('SIGTERM');
   const result = await Promise.race([closed, delay(6000).then(() => { throw new Error('Server did not stop'); })]);
   assert.equal(result[0], 0, log);
   await assert.rejects(fetch(base, { signal: AbortSignal.timeout(1000) }));
-  console.log('macOS bundle check passed: isolated runtime, Unicode folder, media probing, local-only API, torrents, direct playback, HLS transcoding, byte ranges, shutdown.');
+  console.log('macOS bundle check passed: isolated runtime, Unicode folder, media probing, local-only API, torrents, direct playback, HLS transcoding, original surround audio, conversion fallback, byte ranges, shutdown.');
 } finally {
   if (child && child.exitCode === null) child.kill('SIGKILL');
   await fs.rm(temporary, { recursive: true, force: true });

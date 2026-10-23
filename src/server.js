@@ -205,14 +205,16 @@ export function createApp({ library, artwork, torrents, subtitles, info, log }) 
       // Kick off indexing so next time this file can be remuxed instead of transcoded.
       library.kfQ.push('k' + it.id, () => library.ensureKeyframes(it));
     }
-    let d = decide(it, caps, { quality: body.quality, audio: body.audio, canRemux });
+    let d = decide(it, caps, { quality: body.quality, audio: body.audio, canRemux, forceAudioTranscode: !!body.force });
     if (body.force && d.mode === 'direct') {
       // The browser claimed support but failed to play the file: convert it on the server instead.
-      d = decide(it, { ...caps, mp4: false, webm: false }, { quality: body.quality, audio: body.audio, canRemux });
+      d = decide(it, { ...caps, mp4: false, webm: false }, { quality: body.quality, audio: body.audio, canRemux, forceAudioTranscode: true });
       d.reason = `${d.mode === 'remux' ? 'Remuxing' : 'Transcoding'}: direct play failed on this device`;
     }
     hls.stopClient(client);
     const out = { mode: d.mode, reason: d.reason, audio: d.audio, duration: it.probe.duration };
+    if (d.audioCopy) out.audioCopy = true;
+    if (d.nativeHls) out.nativeHls = true;
     if (d.mode === 'direct') out.url = `/media/${it.id}`;
     else out.url = `/hls/${it.id}/${profileString(d)}/${client}/index.m3u8`;
     if (d.height) out.height = d.height;

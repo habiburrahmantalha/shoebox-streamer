@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 test('closing during a play request prevents late playback, errors, and episode navigation', async () => {
-  const saved = new Map(['document', 'window', 'matchMedia', 'fetch'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  const saved = new Map(['document', 'window', 'navigator', 'matchMedia', 'fetch'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   globalThis.document = { createElement: () => ({ canPlayType: () => '' }) };
   globalThis.window = {};
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { userAgent: '' } });
   globalThis.matchMedia = () => ({ matches: true });
   try {
     const { Player } = await import('../public/js/player.js');

@@ -51,7 +51,7 @@ function containerKind(ext, format) {
 /**
  * @param {object} item     library item: { ext, probe }
  * @param {object} caps     client capabilities
- * @param {object} opts     { quality?: 'auto'|1080|720|480, audio?: number (audio track n), canRemux: bool }
+ * @param {object} opts     { quality?: 'auto'|1080|720|480, audio?: number (audio track n), canRemux: bool, forceAudioTranscode?: bool }
  * @returns {{ mode:'direct'|'remux'|'transcode', reason:string, height?:number, kbps?:number, audio:number }}
  */
 export function decide(item, caps, opts = {}) {
@@ -60,14 +60,21 @@ export function decide(item, caps, opts = {}) {
   const audioN = Number.isInteger(opts.audio) && p.audio[opts.audio] ? opts.audio : Math.max(0, p.audio.findIndex((a) => a.default));
   const a = p.audio[audioN];
   const v = p.video;
+  const as = audioSupported(a, caps);
+  const audio = { audio: audioN };
+  // Only copy codecs carried by our MPEG-TS HLS output and decoded by this client.
+  if (!opts.forceAudioTranscode && a && as.ok &&
+      (['aac', 'mp3'].includes(a.codec) || (caps.hlsNative && ['ac3', 'eac3'].includes(a.codec)))) {
+    audio.audioCopy = true;
+    if (['ac3', 'eac3'].includes(a.codec)) audio.nativeHls = true;
+  }
 
   const q = QUALITY[opts.quality];
   if (q && v && v.height > q.height + 8) {
-    return { mode: 'transcode', reason: `Quality limited to ${q.height}p`, audio: audioN, ...q };
+    return { mode: 'transcode', reason: `Quality limited to ${q.height}p`, ...audio, ...q };
   }
 
   const vs = videoSupported(v, caps);
-  const as = audioSupported(a, caps);
   const kind = containerKind(item.ext, p.format);
   const containerOk = kind === 'mp4' ? caps.mp4 : kind === 'webm' ? caps.webm : false;
   // Browsers only play the first/default audio track of a file natively.
@@ -87,11 +94,11 @@ export function decide(item, caps, opts = {}) {
 
   // TS segments carry H.264 fine; copy the video stream and only fix the container/audio.
   if (vs.ok && v?.codec === 'h264' && v.bitDepth <= 8 && opts.canRemux) {
-    return { mode: 'remux', reason: `Remuxing: ${why.join(', ') || 'container'}`, audio: audioN };
+    return { mode: 'remux', reason: `Remuxing: ${why.join(', ') || 'container'}`, ...audio };
   }
 
   if (!vs.ok) why.unshift(`${vs.why} video`);
   const src = v?.height || 1080;
   const target = src > 1080 ? QUALITY[1080] : { height: src, kbps: src >= 1000 ? 8000 : src >= 700 ? 4500 : 2000 };
-  return { mode: 'transcode', reason: `Transcoding: ${why.join(', ') || 'unsupported format'}`, audio: audioN, ...target };
+  return { mode: 'transcode', reason: `Transcoding: ${why.join(', ') || 'unsupported format'}`, ...audio, ...target };
 }

@@ -325,7 +325,7 @@ export class Player {
     this.pendingStart = startAt;
 
     // iPhone has only ManagedMediaSource; its native HLS player is the more reliable choice there.
-    const useHlsJs = res.mode !== 'direct' && window.Hls && Hls.isSupported() && (!!window.MediaSource || !capabilities().hlsNative);
+    const useHlsJs = res.mode !== 'direct' && !res.nativeHls && window.Hls && Hls.isSupported() && (!!window.MediaSource || !capabilities().hlsNative);
     if (res.mode === 'direct' || !useHlsJs) {
       v.src = res.url;
     } else {
@@ -345,6 +345,7 @@ export class Player {
         if (!data.fatal) return;
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR && recoveries++ < 4) hls.startLoad();
         else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && recoveries++ < 4) hls.recoverMediaError();
+        else if (this.session?.audioCopy) this.fallback(data.details);
         else this.showError(`Playback failed (${data.details})`);
       });
       hls.loadSource(res.url);
@@ -399,7 +400,7 @@ export class Player {
   onVideoError() {
     if (!this.video.getAttribute('src') && !this.hls) return;
     const err = this.video.error;
-    if (this.session?.mode === 'direct') return this.fallback(err?.message || 'decode error');
+    if (this.session?.mode === 'direct' || this.session?.audioCopy) return this.fallback(err?.message || 'decode error');
     if (!this.hls) this.showError(`Playback error${err?.message ? `: ${err.message}` : ''}`);
   }
 
@@ -407,7 +408,7 @@ export class Player {
     if (this.destroyed) return;
     if (this.fallbackTried) return this.showError(`This device can't play the file (${why}).`);
     this.fallbackTried = true;
-    console.info('[shoebox] direct play failed, switching to server conversion:', why);
+    console.info('[shoebox] original media failed, switching to server conversion:', why);
     this.flash('Converting for this device…');
     this.start({ startAt: this.video.currentTime || this.pendingStart || 0, force: 'transcode' });
   }
