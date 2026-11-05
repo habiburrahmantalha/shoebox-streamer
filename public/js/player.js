@@ -239,6 +239,8 @@ export class Player {
     on(document, 'keydown', (e) => this.onKey(e));
     on(document, 'fullscreenchange', () => this.syncFullscreen());
     on(document, 'webkitfullscreenchange', () => this.syncFullscreen());
+    on(window, 'shoeboxfullscreenchange', () => this.syncFullscreen());
+    this.syncFullscreen();
     on(document, 'visibilitychange', () => {
       if (document.visibilityState === 'visible') this.requestWakeLock();
       else this.saveProgress(true);
@@ -970,6 +972,8 @@ export class Player {
 
   // ---------------------------------------------------------------- fullscreen / pip
   async toggleFullscreen() {
+    const native = window.webkit?.messageHandlers?.shoeboxFullscreen;
+    if (native) return native.postMessage('toggle');
     const doc = document;
     const fsEl = doc.fullscreenElement || doc.webkitFullscreenElement;
     if (fsEl) return (doc.exitFullscreen || doc.webkitExitFullscreen).call(doc);
@@ -986,7 +990,7 @@ export class Player {
     if (this.video.webkitEnterFullscreen) this.video.webkitEnterFullscreen();
   }
   syncFullscreen() {
-    const fs = !!(document.fullscreenElement || document.webkitFullscreenElement);
+    const fs = !!(window.shoeboxFullscreen || document.fullscreenElement || document.webkitFullscreenElement);
     $('[data-act=fullscreen]', this.el).innerHTML = fs ? icons.exitFullscreen : icons.fullscreen;
   }
   async togglePip() {
@@ -1072,6 +1076,10 @@ export class Player {
       case 'Escape':
         if (!this.pop.hidden) return this.closePop();
         if (this.drawerOpen) return this.toggleDrawer(false);
+        if (window.shoeboxFullscreen) {
+          handled();
+          return this.toggleFullscreen();
+        }
         if (document.fullscreenElement || document.webkitFullscreenElement) return;
         return this.deps.onClose();
       default:
@@ -1132,6 +1140,7 @@ export class Player {
       navigator.sendBeacon?.('/api/stop', new Blob([JSON.stringify({ client: this.client })], { type: 'application/json' }));
     }
     this.wakeLock?.release().catch(() => {});
+    if (window.shoeboxFullscreen) window.webkit?.messageHandlers?.shoeboxFullscreen?.postMessage('exit');
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     if ('mediaSession' in navigator) navigator.mediaSession.metadata = null;
     document.title = 'Shoebox';

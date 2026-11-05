@@ -4,6 +4,12 @@ All notable changes to this project are documented here. Shoebox follows [Semant
 patch releases for fixes, minor releases for new features, and a major release for breaking changes
 (CLI flags, config format, or URLs that other devices may have saved).
 
+## [0.5.2] - 2026-11-05
+
+### Fixed
+- Use native window fullscreen in the Mac app to avoid moving WebKit's video layer after pause/resume.
+- Keep the fullscreen button, Escape, and player close synchronized with the Mac window.
+
 ## [0.5.1] - 2026-10-23
 
 ### Fixed

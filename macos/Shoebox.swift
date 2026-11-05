@@ -3,7 +3,7 @@ import WebKit
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDelegate,
-                         WKNavigationDelegate, WKDownloadDelegate {
+                         WKNavigationDelegate, WKDownloadDelegate, WKScriptMessageHandler {
     private var window: NSWindow!
     private var webView: WKWebView!
     private let welcome = NSStackView()
@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
         let configuration = WKWebViewConfiguration()
         configuration.mediaTypesRequiringUserActionForPlayback = []
         configuration.preferences.isElementFullscreenEnabled = true
+        configuration.userContentController.add(self, name: "shoeboxFullscreen")
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.uiDelegate = self
         webView.navigationDelegate = self
@@ -265,12 +266,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
         return url.scheme == serverURL.scheme && url.host == serverURL.host && url.port == serverURL.port
     }
 
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == "shoeboxFullscreen", message.frameInfo.isMainFrame,
+              isLocal(message.frameInfo.request.url), let command = message.body as? String else { return }
+        if command == "toggle" || (command == "exit" && window.styleMask.contains(.fullScreen)) {
+            // Keep WebKit's video layer in place rather than fullscreening the DOM element.
+            window.toggleFullScreen(nil)
+        }
+    }
+
+    private func syncFullscreen() {
+        guard isLocal(webView.url) else { return }
+        let fullscreen = window.styleMask.contains(.fullScreen) ? "true" : "false"
+        webView.evaluateJavaScript("window.shoeboxFullscreen = \(fullscreen); window.dispatchEvent(new Event('shoeboxfullscreenchange'))", completionHandler: nil)
+    }
+
+    func windowDidEnterFullScreen(_ notification: Notification) { syncFullscreen() }
+    func windowDidExitFullScreen(_ notification: Notification) { syncFullscreen() }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard isLocal(webView.url) else { return }
         spinner.stopAnimation(nil)
         welcome.isHidden = true
         webView.isHidden = false
         window.makeFirstResponder(webView)
+        syncFullscreen()
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         if (error as NSError).code != NSURLErrorCancelled { showError("Couldn’t load your library", error.localizedDescription) }
