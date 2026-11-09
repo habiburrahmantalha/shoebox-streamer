@@ -6,7 +6,8 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawn, execFileSync } from 'node:child_process';
-import { once } from 'node:events';
+import { EventEmitter, once } from 'node:events';
+import { Readable } from 'node:stream';
 import http from 'node:http';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -82,6 +83,9 @@ try {
   const snapshot = await (await request('/api/library')).json();
   assert.equal(snapshot.items.length, 1);
   const item = snapshot.items[0];
+  const original = await (await request(`/api/local-file/${item.id}`)).json();
+  assert.deepEqual(original, { relativePath: 'Sample.mp4' });
+  assert.equal((await fetch(`${base}/api/local-file/missing`, { signal: AbortSignal.timeout(5000) })).status, 404);
   const range = await fetch(`${base}/media/${item.id}/Sample.mp4`, { headers: { Range: 'bytes=0-99' }, signal: AbortSignal.timeout(15000) });
   assert.equal(range.status, 206);
   assert.equal((await range.arrayBuffer()).byteLength, 100);
@@ -128,6 +132,28 @@ try {
   const result = await Promise.race([closed, delay(6000).then(() => { throw new Error('Server did not stop'); })]);
   assert.equal(result[0], 0, log);
   await assert.rejects(fetch(base, { signal: AbortSignal.timeout(1000) }));
+  // Model a torrent file whose bytes are supplied by a stream instead of a local path.
+  const bytes = await fs.readFile(path.join(library, 'Sample.mp4'));
+  const virtual = { virtualSource: true, rel: 'Sample.mp4', ext: '.mp4', size: bytes.length,
+    createReadStream: ({ start = 0, end = bytes.length - 1 }) => Readable.from([bytes.subarray(start, end + 1)]) };
+  const fixtureLibrary = Object.assign(new EventEmitter(), { get: id => id === 'virtual' ? virtual : undefined });
+  const { createApp } = await import(path.join(server, 'src/server.js'));
+  const fixture = createApp({ library: fixtureLibrary, log: () => {} });
+  const previousDesktop = process.env.SHOEBOX_DESKTOP_READY;
+  process.env.SHOEBOX_DESKTOP_READY = readyFile;
+  try {
+    fixture.server.listen(0, '127.0.0.1');
+    await once(fixture.server, 'listening');
+    const local = `http://127.0.0.1:${fixture.server.address().port}`;
+    assert.deepEqual(await (await fetch(`${local}/api/local-file/virtual`)).json(), { stream: true });
+    const media = await fetch(`${local}/media/virtual`, { headers: { Range: 'bytes=100-199' } });
+    assert.equal(media.status, 206);
+    assert.deepEqual(Buffer.from(await media.arrayBuffer()), bytes.subarray(100, 200));
+  } finally {
+    if (previousDesktop === undefined) delete process.env.SHOEBOX_DESKTOP_READY;
+    else process.env.SHOEBOX_DESKTOP_READY = previousDesktop;
+    await fixture.close();
+  }
   console.log('macOS bundle check passed: isolated runtime, Unicode folder, media probing, local-only API, torrents, direct playback, HLS transcoding, original surround audio, conversion fallback, byte ranges, shutdown.');
 } finally {
   if (child && child.exitCode === null) child.kill('SIGKILL');

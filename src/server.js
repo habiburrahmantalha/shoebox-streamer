@@ -169,6 +169,13 @@ export function createApp({ library, artwork, torrents, subtitles, info, log }) 
 
   route('GET', /^\/api\/library$/, (req, res) => json(res, library.snapshot()));
 
+  route('GET', /^\/api\/local-file\/([\w]+)$/, (req, res, [, id]) => {
+    const item = process.env.SHOEBOX_DESKTOP_READY && library.get(id);
+    if (item?.virtualSource && item.createReadStream) return json(res, { stream: true });
+    if (!item?.path || item.virtualSource) return json(res, { error: 'Video not found' }, 404);
+    json(res, { relativePath: item.rel });
+  });
+
   route('POST', /^\/api\/rescan$/, (req, res) => {
     library.scan();
     json(res, { ok: true });

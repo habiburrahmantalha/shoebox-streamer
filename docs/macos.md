@@ -1,8 +1,8 @@
 # macOS app
 
-Shoebox's macOS app uses AppKit and WKWebView around the same server and player as the CLI.
-The application bundles Node.js, FFmpeg, FFprobe, and the JavaScript dependencies. Users
-do not need Node, Bun, Homebrew, or a copy of the repository.
+Shoebox's macOS app uses AppKit and WKWebView for its library and VLCKit for playback.
+The application bundles Node.js, FFmpeg, FFprobe, VLCKit, and the JavaScript dependencies.
+Users do not need a separate VLC installation, Node, Bun, Homebrew, or a copy of the repository.
 
 ## Build and run
 
@@ -14,7 +14,7 @@ npm run build:macos
 open dist/Shoebox.app
 ```
 
-The first build downloads pinned media binaries and the native prebuild needed by WebTorrent.
+The first build downloads pinned media binaries, the VideoLAN VLCKit framework, and the native prebuild needed by WebTorrent.
 Downloads are cached in `.macos-cache/`. The build refuses nonportable binaries that depend on
 Homebrew or other libraries outside macOS, verifies signatures, and runs a bundle smoke check.
 Output: `dist/Shoebox.app` and `dist/Shoebox-<version>-macos-<architecture>.zip`.
@@ -37,9 +37,18 @@ library folder. Folder selection and window geometry use macOS preferences. Serv
 The existing `~/.shoebox.conf` settings still apply, except desktop binding/port/mDNS overrides.
 Media metadata and thumbnails use the existing `.shoebox` cache in the selected folder.
 
-## Audio quality
+## Playback
 
-The embedded WebKit player plays the original file directly when it supports the container,
+Choose **Play** or click a video to open the native player in the same window. Local files play
+directly from disk; unfinished torrents use their original stream. Neither path re-encodes the media.
+The controls support pause, seeking, ten-second skips, volume, speed, and audio and subtitle
+track selection. Use **Subtitles → Add subtitle file…** to load a separate subtitle. Use
+**Episodes** to browse thumbnail previews or the previous and next buttons to switch episodes. Double-click the video or
+press **F** to toggle fullscreen. **Back** returns to the library and saves your playback position.
+
+## Browser streaming quality
+
+The browser player plays the original file directly when it supports the container,
 video, and selected audio track. Keep Quality on Auto to avoid requesting video conversion.
 MKV and unsupported codecs may still require HLS streaming. Compatible AAC and MP3 audio
 is copied without re-encoding, even when the video needs conversion. Supported AC-3/E-AC-3

@@ -61,12 +61,15 @@ The build creates `dist/Shoebox.app` and a ZIP archive. Build on Apple Silicon f
 Intel Macs need a separate build, which has not yet been validated.
 
 To install, drag `dist/Shoebox.app` into **Applications**, then launch **Shoebox** from
-Applications or Spotlight. The built app bundles Node.js, FFmpeg, FFprobe, and its dependencies;
-running it does not require Node, Bun, Homebrew, or this checkout.
+Applications or Spotlight. The built app bundles Node.js, FFmpeg, FFprobe, and VLCKit;
+running it does not require a separate VLC installation, Node, Bun, Homebrew, or this checkout.
 
 Choose your video folder in the welcome window. Use **File → Open Video Folder…** (⌘O)
 to change it. Shoebox includes subfolders and remembers the last selected folder.
 Close the last window or press ⌘Q to quit the app and its server.
+
+Click **Play** to watch in the same Shoebox window. The native player reads local files directly
+from disk and streams unfinished torrents without re-encoding.
 
 The desktop app serves only this Mac at `127.0.0.1:7172`. To stream to an iPad, phone,
 or TV on the same network, use browser mode from the checkout:

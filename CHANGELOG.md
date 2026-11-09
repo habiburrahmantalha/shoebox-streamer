@@ -4,6 +4,29 @@ All notable changes to this project are documented here. Shoebox follows [Semant
 patch releases for fixes, minor releases for new features, and a major release for breaking changes
 (CLI flags, config format, or URLs that other devices may have saved).
 
+## [0.6.2] - 2026-11-09
+
+### Added
+- Native subtitle and audio selection, playback speed, mute, ten-second skips, and episode controls.
+- Double-click the native video to enter or exit fullscreen.
+- Browse episodes with thumbnail previews in the native player.
+
+## [0.6.1] - 2026-11-09
+
+### Changed
+- Use VLCKit for all Mac app playback in the same window, with direct disk access for local files and original streams for unfinished torrents.
+- Save and resume watch progress in the native Mac player.
+
+## [0.6.0] - 2026-11-09
+
+### Added
+- Embed VLCKit in the Mac app for original file playback in a native Shoebox window, without a separate VLC install.
+
+## [0.5.3] - 2026-11-09
+
+### Added
+- Open original local files from the Mac app in VLC or the default player without streaming or re-encoding.
+
 ## [0.5.2] - 2026-11-05
 
 ### Fixed

@@ -3,7 +3,7 @@ import WebKit
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUIDelegate,
-                         WKNavigationDelegate, WKDownloadDelegate, WKScriptMessageHandler {
+                         WKNavigationDelegate, WKDownloadDelegate, WKScriptMessageHandler, WKScriptMessageHandlerWithReply {
     private var window: NSWindow!
     private var webView: WKWebView!
     private let welcome = NSStackView()
@@ -14,6 +14,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
     private var sessionDir: URL?
     private var serverURL: URL?
     private var folder: URL?
+    private var originalPlayer: OriginalPlayer?
+    private var playbackRequest = 0
     private var logHandle: FileHandle?
     private var afterStop: (() -> Void)?
     private let defaults = UserDefaults.standard
@@ -29,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
         configuration.mediaTypesRequiringUserActionForPlayback = []
         configuration.preferences.isElementFullscreenEnabled = true
         configuration.userContentController.add(self, name: "shoeboxFullscreen")
+        configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "shoeboxPlayOriginal")
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.uiDelegate = self
         webView.navigationDelegate = self
@@ -112,7 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
 
     @objc private func about() { NSApp.orderFrontStandardAboutPanel(nil) }
     @objc private func quit() { NSApp.terminate(nil) }
-    @objc private func reload() { webView.reload() }
+    @objc private func reload() { closeOriginalPlayer(); webView.reload() }
     @objc private func revealFolder() {
         if let folder { NSWorkspace.shared.activateFileViewerSelecting([folder]) }
     }
@@ -136,6 +139,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
             showError("Folder unavailable", "Reconnect the drive or choose another readable video folder.")
             return
         }
+        closeOriginalPlayer()
         webView.isHidden = true
         webView.loadHTMLString("", baseURL: nil)
         welcome.isHidden = false
@@ -209,6 +213,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
     }
 
     private func stopServer(_ completion: @escaping () -> Void) {
+        closeOriginalPlayer()
         readyTimer?.invalidate()
         readyTimer = nil
         webView.stopLoading()
@@ -273,6 +278,84 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
             // Keep WebKit's video layer in place rather than fullscreening the DOM element.
             window.toggleFullScreen(nil)
         }
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) async -> (Any?, String?) {
+        guard message.name == "shoeboxPlayOriginal", message.frameInfo.isMainFrame,
+              isLocal(message.frameInfo.request.url), let base = serverURL, let folder,
+              let request = message.body as? [String: Any] else {
+            return (nil, "Invalid local playback request.")
+        }
+        if request["stop"] as? Bool == true {
+            closeOriginalPlayer()
+            return (true, nil)
+        }
+        guard let id = request["id"] as? String, id.range(of: "^[a-zA-Z0-9_]{1,64}$", options: .regularExpression) != nil else {
+            return (nil, "Invalid video ID.")
+        }
+        closeOriginalPlayer()
+        let pending = playbackRequest
+        let startAt = request["startAt"] as? Double ?? 0
+        let activeServer = server
+        do {
+            let url = base.appendingPathComponent("api/local-file").appendingPathComponent(id)
+            let (data, response) = try await URLSession.shared.data(for: URLRequest(url: url, timeoutInterval: 5))
+            guard (response as? HTTPURLResponse)?.statusCode == 200,
+                  let result = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  server === activeServer, serverURL == base, self.folder == folder, playbackRequest == pending else {
+                return (nil, "The video is no longer available.")
+            }
+            let source: URL
+            if result["stream"] as? Bool == true {
+                source = base.appendingPathComponent("media").appendingPathComponent(id)
+            } else {
+                guard let relativePath = result["relativePath"] as? String else { return (nil, "The original file is unavailable.") }
+                let root = folder.resolvingSymlinksInPath().standardizedFileURL
+                let file = root.appendingPathComponent(relativePath).resolvingSymlinksInPath().standardizedFileURL
+                guard file.pathComponents.starts(with: root.pathComponents), file != root,
+                      try file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else {
+                    return (nil, "The original file is unavailable.")
+                }
+                source = file
+            }
+            let view = OriginalPlayer(source: source, startAt: startAt.isFinite ? max(0, startAt) : 0,
+                                      id: id, episodes: request["episodes"] as? [[String: String]] ?? [],
+                                      thumbnailBase: base.appendingPathComponent("thumb"),
+                                      autoplay: request["autoplay"] as? Bool ?? false, onBack: { [weak self] in
+                self?.closeOriginalPlayer()
+                self?.webView.evaluateJavaScript("window.dispatchEvent(new Event('shoeboxnativeback'))", completionHandler: nil)
+            }, onProgress: { [weak self] t, d in
+                self?.webView.evaluateJavaScript("window.dispatchEvent(new CustomEvent('shoeboxnativeprogress', {detail: {id: '\(id)', t: \(t), d: \(d)}}))", completionHandler: nil)
+            }, onEpisode: { [weak self] id in
+                self?.webView.callAsyncJavaScript("window.dispatchEvent(new CustomEvent('shoeboxnativeepisode', {detail: id}))",
+                                                   arguments: ["id": id], in: nil, in: .page, completionHandler: nil)
+            })
+            originalPlayer = view
+            let content = window.contentView!
+            view.translatesAutoresizingMaskIntoConstraints = false
+            content.addSubview(view, positioned: .above, relativeTo: webView)
+            NSLayoutConstraint.activate([
+                view.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+                view.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+                view.topAnchor.constraint(equalTo: content.topAnchor),
+                view.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            ])
+            webView.isHidden = true
+            view.play()
+            return (true, nil)
+        } catch {
+            return (nil, "Couldn’t open the video. Check that the drive or stream is available.")
+        }
+    }
+
+    private func closeOriginalPlayer() {
+        playbackRequest += 1
+        guard let view = originalPlayer else { return }
+        originalPlayer = nil
+        view.stop()
+        view.removeFromSuperview()
+        webView.isHidden = false
+        window.makeFirstResponder(webView)
     }
 
     private func syncFullscreen() {

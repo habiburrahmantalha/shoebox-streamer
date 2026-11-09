@@ -42,6 +42,9 @@ export function externalLinks(item) {
   return { url, vlc };
 }
 
+const nativePlayer = window.webkit?.messageHandlers?.shoeboxPlayOriginal;
+let nativePlayback;
+
 function showEpisodes(show) {
   return show.episodes.map((id) => state.items.get(id)).filter(Boolean);
 }
@@ -218,7 +221,7 @@ function itemMenu(anchor, it) {
       onClick: () => (store.markWatched(it.id, !watched, it.duration), render()),
     },
     'hr',
-    { icon: icons.vlc, label: 'Open in VLC', href: ext.vlc },
+    nativePlayer ? null : { icon: icons.vlc, label: 'Open in VLC', href: ext.vlc },
     it.showId
       ? { icon: icons.list, label: 'VLC playlist from here (.m3u)', href: `/playlist/show/${it.showId}.m3u?from=${it.id}`, download: true }
       : { icon: icons.list, label: 'VLC playlist (.m3u)', href: `/playlist/item/${it.id}.m3u`, download: true },
@@ -542,6 +545,10 @@ function onRoute() {
     openPlayerFor(state.route.id);
     return;
   }
+  if (nativePlayback) {
+    nativePlayback = null;
+    nativePlayer.postMessage({ stop: true }).catch(() => {});
+  }
   if (state.player) {
     state.player.destroy();
     state.player = null;
@@ -555,11 +562,32 @@ function onRoute() {
   render();
 }
 
+function closePlayerRoute() {
+  location.replace(playerBackHash(lastViewKey && JSON.parse(lastViewKey)));
+}
+
 function openPlayerFor(id) {
   const item = state.items.get(id);
   if (!item) {
     toast('That video is no longer in the library');
     location.replace('#/');
+    return;
+  }
+  if (nativePlayer) {
+    if (nativePlayback?.id === id) return;
+    const show = state.shows.get(item.showId);
+    const episodes = show ? showEpisodes(show).map((episode) => ({
+      id: episode.id, title: `${epCode(episode)} ${episode.title || ''}`.trim(),
+      duration: fmtDuration(episode.duration),
+    })) : [];
+    const request = { id, startAt: store.inProgress(id) ? store.getProgress(id).t : 0,
+      episodes, autoplay: store.getSetting('autoplayNext') };
+    nativePlayback = request;
+    nativePlayer.postMessage(request).catch((error) => {
+      if (nativePlayback !== request) return;
+      toast(error.message || 'Couldn’t open the video');
+      closePlayerRoute();
+    });
     return;
   }
   document.body.classList.add('no-scroll');
@@ -573,10 +601,7 @@ function openPlayerFor(id) {
     episodesOf: (show) => showEpisodes(show),
     externalLinks,
     episodeRow,
-    onClose: () => {
-      // WebView history can include blank pages or other watch routes.
-      location.replace(playerBackHash(lastViewKey && JSON.parse(lastViewKey)));
-    },
+    onClose: closePlayerRoute,
     navigate: (itemId) => location.replace(`#/watch/${itemId}`),
   });
   state.player.load(item);
@@ -594,6 +619,13 @@ async function boot() {
   renderTopbar();
   api('/api/info').then((i) => (state.info = i)).catch(() => {});
   window.addEventListener('hashchange', onRoute);
+  if (nativePlayer) {
+    window.addEventListener('shoeboxnativeback', closePlayerRoute);
+    window.addEventListener('shoeboxnativeprogress', ({ detail: { id, t, d } }) => store.setProgress(id, t, d));
+    window.addEventListener('shoeboxnativeepisode', ({ detail: id }) => {
+      if (nativePlayback && id !== nativePlayback.id && state.items.has(id)) location.replace(`#/watch/${id}`);
+    });
+  }
   onRoute();
 
   const es = new EventSource('/api/events');

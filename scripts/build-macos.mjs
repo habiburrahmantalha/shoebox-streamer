@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { gunzipSync } from 'node:zlib';
+import { createHash } from 'node:crypto';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json')));
@@ -12,7 +13,9 @@ const contents = path.join(app, 'Contents');
 const resources = path.join(contents, 'Resources');
 const runtime = path.join(resources, 'runtime');
 const server = path.join(resources, 'server');
+const frameworks = path.join(contents, 'Frameworks');
 const identity = process.env.CODE_SIGN_IDENTITY || '-';
+const architecture = process.arch === 'arm64' ? 'arm64' : 'x86_64';
 
 function run(command, args, options = {}) {
   return execFileSync(command, args, { cwd: root, stdio: 'inherit', ...options });
@@ -20,13 +23,13 @@ function run(command, args, options = {}) {
 function download(url, target) {
   if (fs.existsSync(target)) return;
   console.log(`Downloading ${path.basename(target)}…`);
-  run('/usr/bin/curl', ['--fail', '--location', '--retry', '2', '--max-time', '240',
+  run('/usr/bin/curl', ['--fail', '--location', '--retry', '2', '--max-time', '600',
                       '--silent', '--show-error', '--output', `${target}.tmp`, url]);
   fs.renameSync(`${target}.tmp`, target);
 }
 function checkPortable(file) {
-  const output = run('/usr/bin/otool', ['-L', file], { encoding: 'utf8', stdio: 'pipe' });
-  const ownID = run('/usr/bin/otool', ['-D', file], { encoding: 'utf8', stdio: 'pipe' }).split('\n').slice(1).join('\n').trim();
+  const output = run('/usr/bin/otool', ['-arch', architecture, '-L', file], { encoding: 'utf8', stdio: 'pipe' });
+  const ownID = run('/usr/bin/otool', ['-arch', architecture, '-D', file], { encoding: 'utf8', stdio: 'pipe' }).split('\n').slice(1).join('\n').trim();
   for (const line of output.split('\n').slice(1)) {
     const dependency = line.trim().split(' (')[0];
     if (dependency && dependency !== ownID && !dependency.startsWith('/usr/lib/') && !dependency.startsWith('/System/Library/')) {
@@ -75,8 +78,31 @@ if (!fs.existsSync(nodeLicense)) {
   download(`https://raw.githubusercontent.com/nodejs/node/v${process.versions.node}/LICENSE`, cachedNodeLicense);
 }
 
+const vlckitVersion = '3.7.3';
+const vlckitUrl = 'https://download.videolan.org/cocoapods/prod/VLCKit-3.7.3-319ed2c0-79128878.tar.xz';
+const vlckitArchive = path.join(cache, `VLCKit-${vlckitVersion}.tar.xz`);
+download(vlckitUrl, vlckitArchive);
+const vlckitHash = createHash('sha256').update(fs.readFileSync(vlckitArchive)).digest('hex');
+if (vlckitHash !== '019afdae4e2e2d0f3ac325fac8f7ba0af25dca70b9d157df7d60db88e0be8e5d') {
+  throw new Error(`Unexpected VLCKit checksum. Remove ${vlckitArchive} and rebuild.`);
+}
+
 fs.rmSync(app, { recursive: true, force: true });
-for (const directory of [runtime, server, path.join(contents, 'MacOS')]) fs.mkdirSync(directory, { recursive: true });
+for (const directory of [runtime, server, frameworks, path.join(contents, 'MacOS')]) fs.mkdirSync(directory, { recursive: true });
+const vlckit = path.join(frameworks, 'VLCKit.framework');
+const extracted = fs.mkdtempSync(path.join(cache, 'vlckit-'));
+try {
+  const packageRoot = 'VLCKit - binary package';
+  const frameworkPath = `${packageRoot}/VLCKit.xcframework/macos-arm64_x86_64/VLCKit.framework`;
+  const licensePath = `${packageRoot}/COPYING.txt`;
+  run('/usr/bin/tar', ['-xJf', vlckitArchive, '-C', extracted, frameworkPath, licensePath]);
+  run('/usr/bin/ditto', [path.join(extracted, frameworkPath), vlckit]);
+  fs.copyFileSync(path.join(extracted, licensePath), path.join(resources, 'VLCKit-COPYING.txt'));
+} finally {
+  fs.rmSync(extracted, { recursive: true, force: true });
+}
+run('/usr/bin/lipo', ['-verify_arch', architecture, path.join(vlckit, 'VLCKit')]);
+checkPortable(path.join(vlckit, 'VLCKit'));
 for (const entry of ['bin', 'src', 'public', 'package.json', 'LICENSE', 'README.md']) {
   fs.cpSync(path.join(root, entry), path.join(server, entry), { recursive: true });
 }
@@ -106,6 +132,8 @@ fs.writeFileSync(path.join(resources, 'THIRD-PARTY.txt'),
   `Node.js ${process.versions.node}: runtime/NODE-LICENSE, https://github.com/nodejs/node\n` +
   `FFmpeg/FFprobe ${release}: runtime/FFMPEG-LICENSE and runtime/FFMPEG-README\n` +
   `Build provenance: https://github.com/eugeneware/ffmpeg-static/releases/tag/${release}\n` +
+  `VLCKit ${vlckitVersion}: VLCKit-COPYING.txt, ${vlckitUrl}\n` +
+  `Source: https://code.videolan.org/videolan/VLCKit/-/tree/${vlckitVersion}\n` +
   'JavaScript dependencies and their license files are included in server/node_modules.\n');
 
 const iconset = path.join(cache, 'Shoebox.iconset');
@@ -142,10 +170,12 @@ fs.writeFileSync(path.join(contents, 'Info.plist'), `<?xml version="1.0" encodin
 
 console.log('Compiling native macOS window…');
 run('/usr/bin/xcrun', ['swiftc', '-parse-as-library', '-swift-version', '5', '-O', '-target',
-                     `${process.arch === 'arm64' ? 'arm64' : 'x86_64'}-apple-macosx13.0`,
+                     `${architecture}-apple-macosx13.0`,
                      '-module-cache-path', path.join(cache, 'swift-modules'),
                      '-framework', 'AppKit', '-framework', 'WebKit',
-                     path.join(root, 'macos/Shoebox.swift'), '-o', path.join(contents, 'MacOS/Shoebox')]);
+                     '-F', frameworks, '-framework', 'VLCKit',
+                     path.join(root, 'macos/Shoebox.swift'), path.join(root, 'macos/OriginalPlayer.swift'),
+                     '-o', path.join(contents, 'MacOS/Shoebox')]);
 const nativeFiles = [];
 function collect(directory) {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -159,6 +189,7 @@ for (const file of [...nativeFiles, ...['node', 'ffmpeg', 'ffprobe'].map(name =>
   checkPortable(file);
   sign(file, path.basename(file) === 'node');
 }
+sign(vlckit);
 sign(app);
 run('/usr/bin/codesign', ['--verify', '--deep', '--strict', app]);
 console.log('Checking bundled playback and server shutdown…');
