@@ -364,8 +364,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
         webView.evaluateJavaScript("window.shoeboxFullscreen = \(fullscreen); window.dispatchEvent(new Event('shoeboxfullscreenchange'))", completionHandler: nil)
     }
 
-    func windowDidEnterFullScreen(_ notification: Notification) { syncFullscreen() }
-    func windowDidExitFullScreen(_ notification: Notification) { syncFullscreen() }
+    func windowDidEnterFullScreen(_ notification: Notification) { originalPlayer?.fullscreenChanged(); syncFullscreen() }
+    func windowDidExitFullScreen(_ notification: Notification) { originalPlayer?.fullscreenChanged(); syncFullscreen() }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard isLocal(webView.url) else { return }

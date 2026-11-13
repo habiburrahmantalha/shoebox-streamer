@@ -21,6 +21,14 @@ final class OriginalPlayer: NSView, NSMenuDelegate {
     private let autoplay: Bool
     private var advanced = false
     private var episodePopover: NSPopover?
+    private let controls = NSStackView()
+    private var videoAboveControls: NSLayoutConstraint!
+    private var videoToBottom: NSLayoutConstraint!
+    private var activityMonitor: Any?
+    private var acceptedMouseMoves = false
+    private var lastActivity = ProcessInfo.processInfo.systemUptime
+    private var cursorHidden = false
+    private var menuOpen = false
 
     init(source: URL, startAt: Double, id: String, episodes: [[String: String]], thumbnailBase: URL, autoplay: Bool,
          onBack: @escaping () -> Void, onProgress: @escaping (Double, Double) -> Void,
@@ -81,6 +89,7 @@ final class OriginalPlayer: NSView, NSMenuDelegate {
         subtitles.menu?.delegate = self
         audio.menu?.delegate = self
         let speed = popup("Speed")
+        speed.menu?.delegate = self
         for rate in [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] {
             let item = menuItem("\(rate.formatted())×", #selector(selectSpeed(_:)), rate)
             item.state = rate == 1 ? .on : .off
@@ -94,7 +103,10 @@ final class OriginalPlayer: NSView, NSMenuDelegate {
             iconButton("arrow.up.left.and.arrow.down.right", "Fullscreen", "f", #selector(toggleFullscreen)),
         ])
         let timeline = row([position, time, iconButton("speaker.slash", "Mute or unmute", "m", #selector(toggleMute)), volume])
-        let controls = NSStackView(views: [timeline, transport])
+        controls.addArrangedSubview(timeline)
+        controls.addArrangedSubview(transport)
+        controls.wantsLayer = true
+        controls.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         controls.orientation = .vertical
         controls.alignment = .centerX
         controls.spacing = 6
@@ -103,13 +115,15 @@ final class OriginalPlayer: NSView, NSMenuDelegate {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
+        videoAboveControls = picture.bottomAnchor.constraint(equalTo: controls.topAnchor)
+        videoToBottom = picture.bottomAnchor.constraint(equalTo: bottomAnchor)
         NSLayoutConstraint.activate([
             timeline.widthAnchor.constraint(equalTo: controls.widthAnchor, constant: -24),
             transport.widthAnchor.constraint(equalTo: controls.widthAnchor, constant: -24),
             picture.topAnchor.constraint(equalTo: topAnchor),
             picture.leadingAnchor.constraint(equalTo: leadingAnchor),
             picture.trailingAnchor.constraint(equalTo: trailingAnchor),
-            picture.bottomAnchor.constraint(equalTo: controls.topAnchor),
+            videoAboveControls,
             controls.leadingAnchor.constraint(equalTo: leadingAnchor),
             controls.trailingAnchor.constraint(equalTo: trailingAnchor),
             controls.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -122,6 +136,16 @@ final class OriginalPlayer: NSView, NSMenuDelegate {
     }
 
     func play() {
+        if let window {
+            acceptedMouseMoves = window.acceptsMouseMovedEvents
+            window.acceptsMouseMovedEvents = true
+        }
+        activityMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDown, .leftMouseDragged,
+                                                                      .rightMouseDown, .scrollWheel, .keyDown]) { [weak self] event in
+            if let self, let window = self.window, event.window === window { self.revealControls() }
+            return event
+        }
+        fullscreenChanged()
         player.play()
         timer = Timer.scheduledTimer(timeInterval: 0.25, target: self, selector: #selector(updateControls), userInfo: nil, repeats: true)
     }
@@ -172,6 +196,7 @@ final class OriginalPlayer: NSView, NSMenuDelegate {
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === subtitles.menu || menu === audio.menu else { return }
         let isSubtitle = menu === subtitles.menu
         let names = isSubtitle ? player.videoSubTitlesNames : player.audioTrackNames
         let indexes = isSubtitle ? player.videoSubTitlesIndexes : player.audioTrackIndexes
@@ -190,6 +215,9 @@ final class OriginalPlayer: NSView, NSMenuDelegate {
             menu.addItem(menuItem("Add subtitle file…", #selector(addSubtitle)))
         }
     }
+
+    func menuWillOpen(_ menu: NSMenu) { menuOpen = true; revealControls() }
+    func menuDidClose(_ menu: NSMenu) { menuOpen = false; revealControls() }
 
     @objc private func selectSubtitle(_ item: NSMenuItem) {
         if let track = item.representedObject as? NSNumber { player.currentVideoSubTitleIndex = track.int32Value }
@@ -237,7 +265,48 @@ final class OriginalPlayer: NSView, NSMenuDelegate {
     @objc private func toggleFullscreen() { window?.toggleFullScreen(nil) }
     @objc private func goBack() { onBack() }
 
+    func fullscreenChanged() {
+        let fullscreen = window?.styleMask.contains(.fullScreen) == true
+        if fullscreen {
+            videoAboveControls.isActive = false
+            videoToBottom.isActive = true
+        } else {
+            videoToBottom.isActive = false
+            videoAboveControls.isActive = true
+        }
+        revealControls()
+    }
+
+    private func revealControls() {
+        lastActivity = ProcessInfo.processInfo.systemUptime
+        controls.isHidden = false
+        setCursorHidden(false)
+    }
+
+    private func setCursorHidden(_ hidden: Bool) {
+        guard cursorHidden != hidden else { return }
+        if hidden { NSCursor.hide() } else { NSCursor.unhide() }
+        cursorHidden = hidden
+    }
+
+    private func updateFullscreenControls() {
+        guard let window, window.styleMask.contains(.fullScreen), player.isPlaying,
+              !menuOpen, episodePopover?.isShown != true, window.attachedSheet == nil else {
+            revealControls()
+            return
+        }
+        let active = window.isKeyWindow && NSApp.isActive
+        let mouse = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        if active && (NSEvent.pressedMouseButtons != 0 || (!controls.isHidden && controls.frame.contains(mouse))) {
+            revealControls()
+            return
+        }
+        controls.isHidden = ProcessInfo.processInfo.systemUptime - lastActivity >= 3
+        setCursorHidden(controls.isHidden && active && picture.frame.contains(mouse))
+    }
+
     @objc private func updateControls() {
+        updateFullscreenControls()
         let label = player.isPlaying ? "Pause" : "Play"
         if playButton.accessibilityLabel() != label { setIcon(playButton, player.isPlaying ? "pause.fill" : "play.fill", label) }
         position.isEnabled = player.isSeekable
@@ -264,6 +333,10 @@ final class OriginalPlayer: NSView, NSMenuDelegate {
     }
 
     func stop() {
+        if let activityMonitor { NSEvent.removeMonitor(activityMonitor) }
+        activityMonitor = nil
+        window?.acceptsMouseMovedEvents = acceptedMouseMoves
+        revealControls()
         episodePopover?.close()
         saveProgress()
         timer?.invalidate()

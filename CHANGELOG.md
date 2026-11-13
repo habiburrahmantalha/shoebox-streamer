@@ -4,6 +4,11 @@ All notable changes to this project are documented here. Shoebox follows [Semant
 patch releases for fixes, minor releases for new features, and a major release for breaking changes
 (CLI flags, config format, or URLs that other devices may have saved).
 
+## [0.6.3] - 2026-11-13
+
+### Fixed
+- Hide the native toolbar and mouse pointer during idle fullscreen playback, and restore them when playback pauses or you interact with the player.
+
 ## [0.6.2] - 2026-11-09
 
 ### Added
