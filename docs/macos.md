@@ -43,8 +43,10 @@ Choose **Play** or click a video to open the native player in the same window. L
 directly from disk; unfinished torrents use their original stream. Neither path re-encodes the media.
 The controls support pause, seeking, ten-second skips, volume, speed, and audio and subtitle
 track selection. Use **Subtitles → Add subtitle file…** to load a separate subtitle. Use
-**Episodes** to browse thumbnail previews or the previous and next buttons to switch episodes. Double-click the video or
-press **F** to toggle fullscreen. **Back** returns to the library and saves your playback position.
+**Episodes** to browse thumbnail previews or the previous and next buttons to switch episodes.
+Double-click the video or press **F** to toggle fullscreen. Move the pointer to reveal the
+controls in fullscreen. **Back** at the top left returns to browsing and saves your playback
+position. **Escape** exits fullscreen first, or returns to browsing when windowed.
 
 ## Browser streaming quality
 

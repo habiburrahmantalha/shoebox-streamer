@@ -22,6 +22,7 @@ final class OriginalPlayer: NSView, NSMenuDelegate {
     private var advanced = false
     private var episodePopover: NSPopover?
     private let controls = NSStackView()
+    private let backButton = NSButton()
     private var videoAboveControls: NSLayoutConstraint!
     private var videoToBottom: NSLayoutConstraint!
     private var activityMonitor: Any?
@@ -95,8 +96,15 @@ final class OriginalPlayer: NSView, NSMenuDelegate {
             item.state = rate == 1 ? .on : .off
             speed.menu?.addItem(item)
         }
+        backButton.title = "Back"
+        backButton.image = NSImage(systemSymbolName: "chevron.left", accessibilityDescription: nil)
+        backButton.imagePosition = .imageLeading
+        backButton.bezelStyle = .rounded
+        backButton.target = self
+        backButton.action = #selector(goBack)
+        backButton.toolTip = "Return to the library or episode list"
         let transport = row([
-            iconButton("chevron.left", "Back", "", #selector(goBack)), previous,
+            previous,
             iconButton("gobackward.10", "Back 10 seconds", "j", #selector(skipBack)), playButton,
             iconButton("goforward.10", "Forward 10 seconds", "l", #selector(skipForward)), next,
             episodePicker, NSView(), subtitles, audio, speed,
@@ -111,13 +119,15 @@ final class OriginalPlayer: NSView, NSMenuDelegate {
         controls.alignment = .centerX
         controls.spacing = 6
         controls.edgeInsets = NSEdgeInsets(top: 8, left: 12, bottom: 8, right: 12)
-        for view in [picture, controls] {
+        for view in [picture, controls, backButton] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
         videoAboveControls = picture.bottomAnchor.constraint(equalTo: controls.topAnchor)
         videoToBottom = picture.bottomAnchor.constraint(equalTo: bottomAnchor)
         NSLayoutConstraint.activate([
+            backButton.topAnchor.constraint(equalTo: topAnchor, constant: 16),
+            backButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             timeline.widthAnchor.constraint(equalTo: controls.widthAnchor, constant: -24),
             transport.widthAnchor.constraint(equalTo: controls.widthAnchor, constant: -24),
             picture.topAnchor.constraint(equalTo: topAnchor),
@@ -142,7 +152,15 @@ final class OriginalPlayer: NSView, NSMenuDelegate {
         }
         activityMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDown, .leftMouseDragged,
                                                                       .rightMouseDown, .scrollWheel, .keyDown]) { [weak self] event in
-            if let self, let window = self.window, event.window === window { self.revealControls() }
+            guard let self, let window = self.window, event.window === window else { return event }
+            self.revealControls()
+            if event.type == .keyDown, event.keyCode == 53, event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+               !self.menuOpen, self.episodePopover?.isShown != true, window.attachedSheet == nil {
+                if event.isARepeat { return nil }
+                if window.styleMask.contains(.fullScreen) { self.toggleFullscreen() }
+                else { self.goBack() }
+                return nil
+            }
             return event
         }
         fullscreenChanged()
@@ -280,6 +298,7 @@ final class OriginalPlayer: NSView, NSMenuDelegate {
     private func revealControls() {
         lastActivity = ProcessInfo.processInfo.systemUptime
         controls.isHidden = false
+        backButton.isHidden = false
         setCursorHidden(false)
     }
 
@@ -297,11 +316,13 @@ final class OriginalPlayer: NSView, NSMenuDelegate {
         }
         let active = window.isKeyWindow && NSApp.isActive
         let mouse = convert(window.mouseLocationOutsideOfEventStream, from: nil)
-        if active && (NSEvent.pressedMouseButtons != 0 || (!controls.isHidden && controls.frame.contains(mouse))) {
+        let overControls = !controls.isHidden && (controls.frame.contains(mouse) || backButton.frame.contains(mouse))
+        if active && (NSEvent.pressedMouseButtons != 0 || overControls) {
             revealControls()
             return
         }
         controls.isHidden = ProcessInfo.processInfo.systemUptime - lastActivity >= 3
+        backButton.isHidden = controls.isHidden
         setCursorHidden(controls.isHidden && active && picture.frame.contains(mouse))
     }
 

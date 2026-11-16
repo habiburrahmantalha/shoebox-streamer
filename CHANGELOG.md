@@ -4,6 +4,11 @@ All notable changes to this project are documented here. Shoebox follows [Semant
 patch releases for fixes, minor releases for new features, and a major release for breaking changes
 (CLI flags, config format, or URLs that other devices may have saved).
 
+## [0.6.4] - 2026-11-17
+
+### Fixed
+- Make Back visible at the top left of the Mac player when controls are shown, and support Escape to leave fullscreen or return to browsing.
+
 ## [0.6.3] - 2026-11-13
 
 ### Fixed
