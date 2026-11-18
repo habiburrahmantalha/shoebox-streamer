@@ -169,11 +169,16 @@ fs.writeFileSync(path.join(contents, 'Info.plist'), `<?xml version="1.0" encodin
 `);
 
 console.log('Compiling native macOS window…');
+const subtitleScale = path.join(cache, `SubtitleScale-${architecture}.o`);
+run('/usr/bin/xcrun', ['clang', '-fobjc-arc', '-target', `${architecture}-apple-macosx13.0`, '-F', frameworks,
+                     '-I', path.join(vlckit, 'Headers'), '-I', path.join(vlckit, 'PrivateHeaders'),
+                     '-c', path.join(root, 'macos/SubtitleScale.m'), '-o', subtitleScale]);
 run('/usr/bin/xcrun', ['swiftc', '-parse-as-library', '-swift-version', '5', '-O', '-target',
                      `${architecture}-apple-macosx13.0`,
                      '-module-cache-path', path.join(cache, 'swift-modules'),
                      '-framework', 'AppKit', '-framework', 'WebKit',
                      '-F', frameworks, '-framework', 'VLCKit',
+                     '-import-objc-header', path.join(root, 'macos/SubtitleScale.h'), subtitleScale,
                      path.join(root, 'macos/Shoebox.swift'), path.join(root, 'macos/OriginalPlayer.swift'),
                      '-o', path.join(contents, 'MacOS/Shoebox')]);
 const nativeFiles = [];

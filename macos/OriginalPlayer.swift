@@ -4,6 +4,9 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class OriginalPlayer: NSView, NSMenuDelegate {
+    private static let subtitleSizes = [50, 75, 100, 125, 150, 175, 200]
+    private static let subtitleSizeKey = "subtitleSizePercent"
+    private var subtitleSize = 100
     private let player = VLCMediaPlayer()
     private let picture = VLCVideoView(frame: .zero)
     private let playButton = NSButton()
@@ -146,6 +149,10 @@ final class OriginalPlayer: NSView, NSMenuDelegate {
     }
 
     func play() {
+        let preferredSize = UserDefaults.standard.integer(forKey: Self.subtitleSizeKey)
+        if Self.subtitleSizes.contains(preferredSize), ShoeboxSetSubtitleScale(player, Int32(preferredSize)) {
+            subtitleSize = preferredSize
+        }
         if let window {
             acceptedMouseMoves = window.acceptsMouseMovedEvents
             window.acceptsMouseMovedEvents = true
@@ -230,6 +237,16 @@ final class OriginalPlayer: NSView, NSMenuDelegate {
         if menu.items.count <= 1 { menu.addItem(NSMenuItem(title: "No tracks available", action: nil, keyEquivalent: "")) }
         if isSubtitle {
             menu.addItem(.separator())
+            let sizes = NSMenu(title: "Size")
+            for percent in Self.subtitleSizes {
+                let title = percent == 100 ? "100% (Default)" : "\(percent)%"
+                let item = menuItem(title, #selector(selectSubtitleSize(_:)), percent)
+                item.state = percent == subtitleSize ? .on : .off
+                sizes.addItem(item)
+            }
+            let size = NSMenuItem(title: "Size", action: nil, keyEquivalent: "")
+            size.submenu = sizes
+            menu.addItem(size)
             menu.addItem(menuItem("Add subtitle file…", #selector(addSubtitle)))
         }
     }
@@ -239,6 +256,13 @@ final class OriginalPlayer: NSView, NSMenuDelegate {
 
     @objc private func selectSubtitle(_ item: NSMenuItem) {
         if let track = item.representedObject as? NSNumber { player.currentVideoSubTitleIndex = track.int32Value }
+    }
+    @objc private func selectSubtitleSize(_ item: NSMenuItem) {
+        guard let percent = item.representedObject as? Int, Self.subtitleSizes.contains(percent),
+              ShoeboxSetSubtitleScale(player, Int32(percent)) else { return }
+        subtitleSize = percent
+        UserDefaults.standard.set(percent, forKey: Self.subtitleSizeKey)
+        item.menu?.items.forEach { $0.state = $0 === item ? .on : .off }
     }
     @objc private func selectAudio(_ item: NSMenuItem) {
         if let track = item.representedObject as? NSNumber { player.currentAudioTrackIndex = track.int32Value }

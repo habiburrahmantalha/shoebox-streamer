@@ -42,7 +42,9 @@ Media metadata and thumbnails use the existing `.shoebox` cache in the selected 
 Choose **Play** or click a video to open the native player in the same window. Local files play
 directly from disk; unfinished torrents use their original stream. Neither path re-encodes the media.
 The controls support pause, seeking, ten-second skips, volume, speed, and audio and subtitle
-track selection. Use **Subtitles → Add subtitle file…** to load a separate subtitle. Use
+track selection. Use **Subtitles → Size** to resize text subtitles; Shoebox remembers your
+choice. Image-based and burned-in subtitles cannot be resized. Use **Subtitles → Add subtitle file…**
+to load a separate subtitle. Use
 **Episodes** to browse thumbnail previews or the previous and next buttons to switch episodes.
 Double-click the video or press **F** to toggle fullscreen. Move the pointer to reveal the
 controls in fullscreen. **Back** at the top left returns to browsing and saves your playback

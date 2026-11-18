@@ -4,6 +4,11 @@ All notable changes to this project are documented here. Shoebox follows [Semant
 patch releases for fixes, minor releases for new features, and a major release for breaking changes
 (CLI flags, config format, or URLs that other devices may have saved).
 
+## [0.7.0] - 2026-11-17
+
+### Added
+- Adjust text subtitle size in the native Mac player and remember the selected size.
+
 ## [0.6.4] - 2026-11-17
 
 ### Fixed
