@@ -71,6 +71,14 @@ Close the last window or press ⌘Q to quit the app and its server.
 Click **Play** to watch in the same Shoebox window. The native player reads local files directly
 from disk and streams unfinished torrents without re-encoding.
 
+For SBS glasses, use **3D → Half-SBS → Full-SBS** to expand half-width sources during playback,
+or **3D → Full-SBS** for full-width files. For ordinary 2D footage, choose
+**3D → 2D → Full-SBS (AI, Experimental)** to generate depth-based stereo during playback.
+The original file stays unchanged. See [RayNeo setup and AI limitations](docs/macos.md#sbs-3d-on-rayneo-air-4-pro).
+For temporal video-depth processing before watching, choose **3D → 2D → Full-SBS (Prepare HQ…)**.
+It prepares separate cached depth and Full-SBS files, with progress and cancellation, then plays
+the prepared video through VLC. The installed app needs no Python or cloud account.
+
 The desktop app serves only this Mac at `127.0.0.1:7172`. To stream to an iPad, phone,
 or TV on the same network, use browser mode from the checkout:
 

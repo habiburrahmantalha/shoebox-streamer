@@ -4,6 +4,43 @@ All notable changes to this project are documented here. Shoebox follows [Semant
 patch releases for fixes, minor releases for new features, and a major release for breaking changes
 (CLI flags, config format, or URLs that other devices may have saved).
 
+## [0.11.0] - 2026-11-21
+
+### Added
+- Mac **3D → 2D → Full-SBS (Prepare HQ…)** mode using a bundled, native Core ML Video Depth Anything Small model with 32-frame temporal windows at 700×392.
+- Cancellable preparation with progress, reusable depth and Full-SBS caches, automatic source-change invalidation, and depth reuse when changing stereo strength. Original files stay unchanged; prepared playback copies original audio/subtitle tracks.
+
+### Fixed
+- Use CPU/GPU depth inference to avoid a Neural Engine model-compilation stall observed on the development Mac.
+
+## [0.10.2] - 2026-11-21
+
+### Fixed
+- Reduce blurry rims on moving AI stereo outlines by preventing color interpolation across strong image edges.
+- Fill exposed regions using nearby same-depth background texture instead of stretching a single boundary pixel into a flat band.
+
+## [0.10.1] - 2026-11-21
+
+### Fixed
+- Reduce duplicated character outlines in AI stereo by projecting source pixels with depth ordering, refining depth against image edges, and filling exposed gaps from the background side.
+- Reject previous depth more aggressively on moving pixels and depth boundaries to reduce trailing silhouettes.
+
+## [0.10.0] - 2026-11-21
+
+### Improved
+- Stronger AI stereo depth with compressed-range normalization, motion-aware temporal smoothing, and scene-change resets.
+- Add remembered Gentle, Balanced, and Strong AI depth settings in the Mac player's 3D menu; Balanced is the new default.
+
+## [0.9.0] - 2026-11-21
+
+### Added
+- Experimental on-device AI 2D-to-Full-SBS playback for the Mac player, using a bundled Core ML depth model and Metal stereo rendering. Original files remain unchanged, with bounded inference, loading feedback, and normal playback fallback.
+
+## [0.8.0] - 2026-11-21
+
+### Added
+- Mac 3D menu with original Full-SBS and Half-SBS to Full-SBS display modes, remembered per video without re-encoding.
+
 ## [0.7.0] - 2026-11-17
 
 ### Added

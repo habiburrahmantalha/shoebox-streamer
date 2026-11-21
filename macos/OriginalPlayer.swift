@@ -1,6 +1,7 @@
 import AppKit
 import VLCKit
 import UniformTypeIdentifiers
+import Metal
 
 @MainActor
 final class OriginalPlayer: NSView, NSMenuDelegate {
@@ -33,6 +34,26 @@ final class OriginalPlayer: NSView, NSMenuDelegate {
     private var lastActivity = ProcessInfo.processInfo.systemUptime
     private var cursorHidden = false
     private var menuOpen = false
+    private var stereoMode: StereoMode
+    private let stereoPreferenceKey: String
+    private var appliedStereoRatio: String?
+    private let source: URL
+    private let initialPosition: Double
+    private var started = false
+    private var stopped = false
+    private var restarting = false
+    private var pauseAfterRestart = false
+    private var restoreTracks: (audio: Int32, subtitle: Int32)?
+    private var aiView: AIStereoView?
+    private var depthProcessor: StereoDepthProcessor?
+    private var videoFrames: ShoeboxVideoFrames?
+    private var loadingGeneration = UUID()
+    private let aiLoading = NSStackView()
+    private let stereoPicker = NSPopUpButton(frame: .zero, pullsDown: true)
+    private var depthStrength = StereoDepthStrength(rawValue: UserDefaults.standard.float(forKey: "aiDepthStrength")) ?? .balanced
+    private var externalSubtitles: [URL] = []
+    private var preparation: DepthPreparationSheet?
+    private var preparedSource: URL?
 
     init(source: URL, startAt: Double, id: String, episodes: [[String: String]], thumbnailBase: URL, autoplay: Bool,
          onBack: @escaping () -> Void, onProgress: @escaping (Double, Double) -> Void,
@@ -41,6 +62,10 @@ final class OriginalPlayer: NSView, NSMenuDelegate {
         self.onProgress = onProgress
         self.onEpisode = onEpisode
         self.autoplay = autoplay
+        self.source = source
+        initialPosition = startAt
+        stereoPreferenceKey = "stereoMode:\(id)"
+        stereoMode = StereoMode(rawValue: UserDefaults.standard.string(forKey: stereoPreferenceKey) ?? "") ?? .normal
         let index = episodes.firstIndex { $0["id"] == id }
         previousEpisode = index.flatMap { $0 > 0 ? episodes[$0 - 1]["id"] : nil }
         nextEpisode = index.flatMap { $0 + 1 < episodes.count ? episodes[$0 + 1]["id"] : nil }
@@ -99,6 +124,26 @@ final class OriginalPlayer: NSView, NSMenuDelegate {
             item.state = rate == 1 ? .on : .off
             speed.menu?.addItem(item)
         }
+        let stereo = stereoPicker
+        setupPopup(stereo, "3D")
+        stereo.menu?.delegate = self
+        stereo.toolTip = "For RayNeo: enable the glasses’ SBS 3D mode, then fullscreen Shoebox on the 3840×1080 display."
+        for mode in StereoMode.allCases {
+            let item = menuItem(mode.title, #selector(selectStereoMode(_:)), mode.rawValue)
+            item.state = mode == stereoMode ? .on : .off
+            stereo.menu?.addItem(item)
+        }
+        let strengths = NSMenu(title: "AI Depth")
+        strengths.delegate = self
+        for strength in StereoDepthStrength.allCases {
+            let item = menuItem(strength.title, #selector(selectDepthStrength(_:)), strength.rawValue)
+            item.state = strength == depthStrength ? .on : .off
+            strengths.addItem(item)
+        }
+        stereo.menu?.addItem(.separator())
+        let depthItem = NSMenuItem(title: "AI Depth", action: nil, keyEquivalent: "")
+        depthItem.submenu = strengths
+        stereo.menu?.addItem(depthItem)
         backButton.title = "Back"
         backButton.image = NSImage(systemSymbolName: "chevron.left", accessibilityDescription: nil)
         backButton.imagePosition = .imageLeading
@@ -110,7 +155,7 @@ final class OriginalPlayer: NSView, NSMenuDelegate {
             previous,
             iconButton("gobackward.10", "Back 10 seconds", "j", #selector(skipBack)), playButton,
             iconButton("goforward.10", "Forward 10 seconds", "l", #selector(skipForward)), next,
-            episodePicker, NSView(), subtitles, audio, speed,
+            episodePicker, NSView(), subtitles, audio, speed, stereo,
             iconButton("arrow.up.left.and.arrow.down.right", "Fullscreen", "f", #selector(toggleFullscreen)),
         ])
         let timeline = row([position, time, iconButton("speaker.slash", "Mute or unmute", "m", #selector(toggleMute)), volume])
@@ -146,6 +191,22 @@ final class OriginalPlayer: NSView, NSMenuDelegate {
         let media = VLCMedia(url: source)
         if startAt > 0 { media.addOption(":start-time=\(startAt)") }
         player.media = media
+
+        let spinner = NSProgressIndicator()
+        spinner.style = .spinning
+        spinner.startAnimation(nil)
+        let loadingLabel = NSTextField(labelWithString: "Preparing AI 3D…")
+        aiLoading.addArrangedSubview(spinner)
+        aiLoading.addArrangedSubview(loadingLabel)
+        aiLoading.spacing = 10
+        aiLoading.wantsLayer = true
+        aiLoading.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        aiLoading.edgeInsets = NSEdgeInsets(top: 12, left: 16, bottom: 12, right: 16)
+        aiLoading.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(aiLoading)
+        NSLayoutConstraint.activate([aiLoading.centerXAnchor.constraint(equalTo: picture.centerXAnchor),
+                                     aiLoading.centerYAnchor.constraint(equalTo: picture.centerYAnchor)])
+        aiLoading.isHidden = true
     }
 
     func play() {
@@ -171,7 +232,9 @@ final class OriginalPlayer: NSView, NSMenuDelegate {
             return event
         }
         fullscreenChanged()
-        player.play()
+        if stereoMode == .aiFullSBS { prepareAI() }
+        else if stereoMode == .preparedSBS { prepareHighQuality() }
+        else { player.play(); started = true }
         timer = Timer.scheduledTimer(timeInterval: 0.25, target: self, selector: #selector(updateControls), userInfo: nil, repeats: true)
     }
 
@@ -272,6 +335,205 @@ final class OriginalPlayer: NSView, NSMenuDelegate {
         player.rate = Float(rate)
         item.menu?.items.forEach { $0.state = $0 === item ? .on : .off }
     }
+    @objc private func selectStereoMode(_ item: NSMenuItem) {
+        guard let value = item.representedObject as? String, let mode = StereoMode(rawValue: value) else { return }
+        guard mode != stereoMode else { return }
+        stereoMode = mode
+        UserDefaults.standard.set(mode.rawValue, forKey: stereoPreferenceKey)
+        item.menu?.items.forEach { $0.state = $0 === item ? .on : .off }
+        loadingGeneration = UUID()
+        aiLoading.isHidden = true
+        if mode == .aiFullSBS { prepareAI() }
+        else if mode == .preparedSBS { prepareHighQuality() }
+        else if preparedSource != nil {
+            preparedSource = nil
+            restartVideoOutput()
+        }
+        else if videoFrames != nil { restartVideoOutput() }
+        else {
+            applyStereoMode()
+            if !started { player.play(); started = true }
+        }
+    }
+
+    @objc private func selectDepthStrength(_ item: NSMenuItem) {
+        guard let value = item.representedObject as? Float, let strength = StereoDepthStrength(rawValue: value) else { return }
+        depthStrength = strength
+        UserDefaults.standard.set(strength.rawValue, forKey: "aiDepthStrength")
+        aiView?.depthStrength = strength
+        item.menu?.items.forEach { $0.state = $0 === item ? .on : .off }
+        if stereoMode == .preparedSBS { prepareHighQuality() }
+    }
+
+    private func prepareHighQuality() {
+        guard preparation == nil, !stopped, let window else { return }
+        do {
+            let cache = try PreparedDepthCache(source: source, strength: depthStrength)
+            if cache.ready {
+                preparedSource = cache.playbackURL
+                restartVideoOutput()
+                return
+            }
+            let resume = !started || player.isPlaying
+            if started { player.pause() }
+            depthProcessor?.cancel()
+            let sheet = DepthPreparationSheet(cache: cache) { [weak self] result in
+                guard let self, !self.stopped else { return }
+                self.preparation = nil
+                switch result {
+                case .success(let url):
+                    self.preparedSource = url
+                    self.restartVideoOutput(resumePlaying: resume)
+                case .failure(let error): self.failAI(error)
+                case nil:
+                    self.stereoMode = .normal
+                    self.preparedSource = nil
+                    UserDefaults.standard.set(self.stereoMode.rawValue, forKey: self.stereoPreferenceKey)
+                    self.updateStereoSelection()
+                    self.restartVideoOutput(resumePlaying: resume)
+                }
+            }
+            preparation = sheet
+            sheet.start(window: window)
+        } catch { failAI(error) }
+    }
+
+    private func updateStereoSelection() {
+        stereoPicker.menu?.items.forEach { $0.state = ($0.representedObject as? String) == stereoMode.rawValue ? .on : .off }
+    }
+
+    private func prepareAI() {
+        let generation = UUID()
+        loadingGeneration = generation
+        aiLoading.isHidden = false
+        stereoPicker.isEnabled = false
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = Result { () -> (StereoDepthProcessor, StereoMetalRenderer) in
+                guard let device = MTLCreateSystemDefaultDevice(),
+                      let model = Bundle.main.url(forResource: "DepthAnythingV2SmallF16", withExtension: "mlmodelc") else {
+                    throw StereoError("The bundled AI depth model or Metal is unavailable")
+                }
+                return (try StereoDepthProcessor(modelURL: model, device: device), try StereoMetalRenderer(device: device))
+            }
+            DispatchQueue.main.async {
+                guard let self, !self.stopped, self.loadingGeneration == generation, self.stereoMode == .aiFullSBS else { return }
+                switch result {
+                case .success(let (processor, renderer)):
+                    self.depthProcessor = processor
+                    let view = AIStereoView(renderer: renderer)
+                    view.depthStrength = self.depthStrength
+                    view.onFailure = { [weak self] error in self?.failAI(error) }
+                    let doubleClick = NSClickGestureRecognizer(target: self, action: #selector(self.toggleFullscreen))
+                    doubleClick.numberOfClicksRequired = 2
+                    view.addGestureRecognizer(doubleClick)
+                    view.translatesAutoresizingMaskIntoConstraints = false
+                    self.addSubview(view, positioned: .above, relativeTo: self.picture)
+                    NSLayoutConstraint.activate([
+                        view.topAnchor.constraint(equalTo: self.picture.topAnchor),
+                        view.bottomAnchor.constraint(equalTo: self.picture.bottomAnchor),
+                        view.leadingAnchor.constraint(equalTo: self.picture.leadingAnchor),
+                        view.trailingAnchor.constraint(equalTo: self.picture.trailingAnchor),
+                    ])
+                    self.aiView = view
+                    self.restartVideoOutput()
+                case .failure(let error): self.failAI(error)
+                }
+            }
+        }
+    }
+
+    private func failAI(_ error: Error) {
+        guard !stopped, stereoMode == .aiFullSBS || stereoMode == .preparedSBS else { return }
+        stereoMode = .normal
+        loadingGeneration = UUID()
+        aiLoading.isHidden = true
+        stereoPicker.isEnabled = true
+        UserDefaults.standard.set(stereoMode.rawValue, forKey: stereoPreferenceKey)
+        updateStereoSelection()
+        let hadPreparedSource = preparedSource != nil
+        preparedSource = nil
+        if videoFrames != nil || hadPreparedSource { restartVideoOutput() }
+        else if !started { player.play(); started = true }
+        let alert = NSAlert()
+        alert.messageText = "3D couldn’t start"
+        alert.informativeText = "\(error.localizedDescription)\nNormal playback is available."
+        if let window { alert.beginSheetModal(for: window) }
+    }
+
+    private func restartVideoOutput(resumePlaying: Bool? = nil) {
+        guard !restarting, !stopped else { return }
+        restarting = true
+        stereoPicker.isEnabled = false
+        let seconds = started ? max(0, Double(player.time.intValue) / 1000) : initialPosition
+        let wasPlaying = resumePlaying ?? (!started || player.isPlaying)
+        let tracks = (audio: player.currentAudioTrackIndex, subtitle: player.currentVideoSubTitleIndex)
+        ShoeboxStopPlayer(player) { [weak self] in
+            guard let self, !self.stopped else { return }
+            self.finishVideoOutputChange(seconds: seconds, wasPlaying: wasPlaying, tracks: tracks)
+        }
+    }
+
+    private func finishVideoOutputChange(seconds: Double, wasPlaying: Bool, tracks: (audio: Int32, subtitle: Int32)) {
+        videoFrames?.detach(from: player)
+        videoFrames = nil
+        appliedStereoRatio = nil
+        player.videoAspectRatio = nil
+        if stereoMode == .aiFullSBS, let processor = depthProcessor, let view = aiView {
+            let frames = ShoeboxVideoFrames { [weak self, weak view] frame in
+                processor.submit(frame) { result in
+                    guard let self, !self.stopped, self.aiView === view, self.stereoMode == .aiFullSBS else { return }
+                    switch result {
+                    case .success(let depth):
+                        self.aiLoading.isHidden = true
+                        self.stereoPicker.isEnabled = true
+                        view?.show(frame: frame, depth: depth)
+                        if self.pauseAfterRestart { self.pauseAfterRestart = false; self.player.pause() }
+                    case .failure(let error): self.failAI(error)
+                    }
+                }
+            }
+            videoFrames = frames
+            player.drawable = nil
+            frames.attach(to: player)
+            picture.isHidden = true
+        } else {
+            depthProcessor?.cancel()
+            depthProcessor = nil
+            aiView?.removeFromSuperview()
+            aiView = nil
+            picture.isHidden = false
+            player.drawable = picture
+            stereoPicker.isEnabled = true
+        }
+        let media = VLCMedia(url: stereoMode == .preparedSBS ? (preparedSource ?? source) : source)
+        if seconds > 0 { media.addOption(":start-time=\(seconds)") }
+        player.media = media
+        restoreTracks = started ? tracks : nil
+        pauseAfterRestart = !wasPlaying
+        restarting = false
+        player.play()
+        for url in externalSubtitles { _ = player.addPlaybackSlave(url, type: .subtitle, enforce: false) }
+        started = true
+    }
+
+    private func applyStereoMode() {
+        guard videoFrames == nil else { return }
+        let size = player.videoSize
+        guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0,
+              size.width < CGFloat(Int.max / 2), size.height < CGFloat(Int.max) else { return }
+        let ratio = stereoMode.aspectRatio(width: Int(size.width), height: Int(size.height))
+        guard ratio != appliedStereoRatio else { return }
+        // Render both eye images without cropping or encoding a new video.
+        picture.fillScreen = false
+        player.videoCropGeometry = nil
+        player.scaleFactor = 0
+        if let ratio {
+            ratio.withCString { player.videoAspectRatio = UnsafeMutablePointer(mutating: $0) }
+        } else {
+            player.videoAspectRatio = nil
+        }
+        appliedStereoRatio = ratio
+    }
     @objc private func addSubtitle() {
         guard let window else { return }
         let panel = NSOpenPanel()
@@ -282,7 +544,7 @@ final class OriginalPlayer: NSView, NSMenuDelegate {
                 let alert = NSAlert()
                 alert.messageText = "Couldn’t load the subtitle file"
                 alert.beginSheetModal(for: window)
-            }
+            } else { self.externalSubtitles.append(url) }
         }
     }
 
@@ -293,16 +555,18 @@ final class OriginalPlayer: NSView, NSMenuDelegate {
     }
     @objc private func goPrevious() { if let previousEpisode { onEpisode(previousEpisode) } }
     @objc private func goNext() { if let nextEpisode { onEpisode(nextEpisode) } }
-    @objc private func skipBack() { player.jumpBackward(10) }
-    @objc private func skipForward() { player.jumpForward(10) }
+    @objc private func skipBack() { if !restarting { player.jumpBackward(10) } }
+    @objc private func skipForward() { if !restarting { player.jumpForward(10) } }
     @objc private func toggleMute() { if let audio = player.audio { audio.isMuted.toggle() } }
 
     @objc private func togglePlayback() {
+        guard !restarting else { return }
         if player.isPlaying { player.pause() } else { player.play() }
+        started = true
         updateControls()
     }
 
-    @objc private func seek() { if player.isSeekable { player.position = position.floatValue } }
+    @objc private func seek() { if !restarting, player.isSeekable { player.position = position.floatValue } }
     @objc private func setVolume(_ slider: NSSlider) { player.audio?.volume = Int32(slider.intValue) }
     @objc private func toggleFullscreen() { window?.toggleFullScreen(nil) }
     @objc private func goBack() { onBack() }
@@ -351,6 +615,23 @@ final class OriginalPlayer: NSView, NSMenuDelegate {
     }
 
     @objc private func updateControls() {
+        if restarting { time.stringValue = "Switching video output…"; return }
+        if player.state == .error, stereoMode == .aiFullSBS || stereoMode == .preparedSBS {
+            if stereoMode == .preparedSBS, let preparedSource { try? FileManager.default.removeItem(at: preparedSource) }
+            failAI(StereoError("VLC couldn’t open this 3D video. Normal playback is available."))
+        }
+        if player.isPlaying {
+            if let tracks = restoreTracks {
+                player.currentAudioTrackIndex = tracks.audio
+                player.currentVideoSubTitleIndex = tracks.subtitle
+                restoreTracks = nil
+            }
+            if pauseAfterRestart, aiLoading.isHidden {
+                pauseAfterRestart = false
+                player.pause()
+            }
+        }
+        applyStereoMode()
         updateFullscreenControls()
         let label = player.isPlaying ? "Pause" : "Play"
         if playButton.accessibilityLabel() != label { setIcon(playButton, player.isPlaying ? "pause.fill" : "play.fill", label) }
@@ -378,6 +659,10 @@ final class OriginalPlayer: NSView, NSMenuDelegate {
     }
 
     func stop() {
+        stopped = true
+        loadingGeneration = UUID()
+        depthProcessor?.cancel()
+        preparation?.cancelAndClose()
         if let activityMonitor { NSEvent.removeMonitor(activityMonitor) }
         activityMonitor = nil
         window?.acceptsMouseMovedEvents = acceptedMouseMoves
@@ -386,9 +671,16 @@ final class OriginalPlayer: NSView, NSMenuDelegate {
         saveProgress()
         timer?.invalidate()
         timer = nil
-        player.stop()
-        player.media = nil
-        player.drawable = nil
+        let frames = videoFrames
+        videoFrames = nil
+        let player = self.player
+        let picture = self.picture
+        ShoeboxStopPlayer(player) {
+            frames?.detach(from: player)
+            player.media = nil
+            player.drawable = nil
+            withExtendedLifetime(picture) {}
+        }
     }
 }
 

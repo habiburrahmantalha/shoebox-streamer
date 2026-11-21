@@ -87,6 +87,7 @@ if (vlckitHash !== '019afdae4e2e2d0f3ac325fac8f7ba0af25dca70b9d157df7d60db88e0be
   throw new Error(`Unexpected VLCKit checksum. Remove ${vlckitArchive} and rebuild.`);
 }
 
+const { packagePath: videoDepthPackage, source: videoDepthSource } = await import('./build-video-depth.mjs');
 fs.rmSync(app, { recursive: true, force: true });
 for (const directory of [runtime, server, frameworks, path.join(contents, 'MacOS')]) fs.mkdirSync(directory, { recursive: true });
 const vlckit = path.join(frameworks, 'VLCKit.framework');
@@ -136,6 +137,42 @@ fs.writeFileSync(path.join(resources, 'THIRD-PARTY.txt'),
   `Source: https://code.videolan.org/videolan/VLCKit/-/tree/${vlckitVersion}\n` +
   'JavaScript dependencies and their license files are included in server/node_modules.\n');
 
+// Pin the original Apple Core ML export and verify every model file before compiling.
+const depthRevision = 'cfef6f6f2a70783dedc0bfae40cecbc2052285d3';
+const depthPackage = path.join(cache, 'DepthAnythingV2SmallF16.mlpackage');
+const depthFiles = {
+  'Manifest.json': '2883ae290c48fe916dc5ececac03a7d847fa277165a49ef5652fa1d2b9cb55f7',
+  'Data/com.apple.CoreML/model.mlmodel': '44ac97a3efcfd52113183fb2862ff59cd0368e9ec2e30a90a54980dd11407042',
+  'Data/com.apple.CoreML/weights/weight.bin': 'fa60d9b6a155734f59029ebb882fd54e549bfaee3539c1a9cbd2cbbab64a0fed',
+};
+for (const [relative, checksum] of Object.entries(depthFiles)) {
+  const target = path.join(depthPackage, relative);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  download(`https://huggingface.co/apple/coreml-depth-anything-v2-small/resolve/${depthRevision}/DepthAnythingV2SmallF16.mlpackage/${relative}`, target);
+  if (createHash('sha256').update(fs.readFileSync(target)).digest('hex') !== checksum) {
+    throw new Error(`Unexpected depth model checksum. Remove ${target} and rebuild.`);
+  }
+}
+const depthLicense = path.join(cache, 'DepthAnything-LICENSE.txt');
+download('https://raw.githubusercontent.com/DepthAnything/Depth-Anything-V2/main/LICENSE', depthLicense);
+if (createHash('sha256').update(fs.readFileSync(depthLicense)).digest('hex') !== 'c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4') {
+  throw new Error('Unexpected depth model license checksum.');
+}
+fs.copyFileSync(depthLicense, path.join(resources, 'DepthAnything-LICENSE.txt'));
+fs.appendFileSync(path.join(resources, 'THIRD-PARTY.txt'),
+  `Core ML model export: Apple Depth Anything V2 Small F16, revision ${depthRevision}\n` +
+  'Model authors: Lihe Yang et al.; Core ML conversion: Apple. Apache 2.0: DepthAnything-LICENSE.txt\n' +
+  'https://huggingface.co/apple/coreml-depth-anything-v2-small\n');
+run('/usr/bin/xcrun', ['coremlcompiler', 'compile', depthPackage, resources]);
+run('/usr/bin/xcrun', ['coremlcompiler', 'compile', videoDepthPackage, resources]);
+fs.copyFileSync(path.join(videoDepthSource, 'LICENSE'), path.join(resources, 'VideoDepthAnything-LICENSE.txt'));
+fs.copyFileSync(path.join(cache, 'video-depth-export.json'), path.join(resources, 'VideoDepthAnything-PROVENANCE.json'));
+fs.appendFileSync(path.join(resources, 'THIRD-PARTY.txt'),
+  'Video Depth Anything Small (ByteDance), Apache 2.0: VideoDepthAnything-LICENSE.txt\n' +
+  'Source: https://github.com/DepthAnything/Video-Depth-Anything/tree/4f5ae23172ba60fd7bc11ef671cca678842c7072\n' +
+  'Checkpoint: https://huggingface.co/depth-anything/Video-Depth-Anything-Small/tree/256875362cff76724b920335dfb4b29dd611f66e\n' +
+  'Shoebox converts the model to FP16 Core ML with fixed 32-frame, 700×392 input. Validation: VideoDepthAnything-PROVENANCE.json\n');
+
 const iconset = path.join(cache, 'Shoebox.iconset');
 fs.mkdirSync(iconset, { recursive: true });
 for (const size of [16, 32, 128, 256, 512]) {
@@ -169,17 +206,57 @@ fs.writeFileSync(path.join(contents, 'Info.plist'), `<?xml version="1.0" encodin
 `);
 
 console.log('Compiling native macOS window…');
+const stereoChecks = path.join(cache, 'check-stereo-mode');
+run('/usr/bin/xcrun', ['swiftc', '-parse-as-library', '-module-cache-path', path.join(cache, 'swift-modules'),
+                     path.join(root, 'macos/StereoMode.swift'), path.join(root, 'macos/checks/StereoModeChecks.swift'),
+                     '-o', stereoChecks]);
+run(stereoChecks, []);
+const aiChecks = path.join(cache, 'check-ai-stereo');
+run('/usr/bin/xcrun', ['swiftc', '-parse-as-library', '-O', '-module-cache-path', path.join(cache, 'swift-modules'),
+                     path.join(root, 'macos/AIStereo.swift'), path.join(root, 'macos/checks/AIStereoChecks.swift'),
+                     '-o', aiChecks]);
+run(aiChecks, [path.join(resources, 'DepthAnythingV2SmallF16.mlmodelc')]);
+const cacheChecks = path.join(cache, 'check-prepared-depth');
+run('/usr/bin/xcrun', ['swiftc', '-parse-as-library', '-O', '-module-cache-path', path.join(cache, 'swift-modules'),
+                     path.join(root, 'macos/AIStereo.swift'), path.join(root, 'macos/PreparedDepthCache.swift'),
+                     path.join(root, 'macos/checks/PreparedDepthCacheChecks.swift'), '-o', cacheChecks]);
+run(cacheChecks, []);
+const depthHelper = path.join(contents, 'MacOS/ShoeboxDepth');
+run('/usr/bin/xcrun', ['swiftc', '-parse-as-library', '-swift-version', '5', '-O', '-target', `${architecture}-apple-macosx13.0`,
+                     '-module-cache-path', path.join(cache, 'swift-modules'), path.join(root, 'macos/AIStereo.swift'),
+                     path.join(root, 'macos/PreparedDepthCache.swift'), path.join(root, 'macos/DepthPreparationWorker.swift'), '-o', depthHelper]);
+sign(depthHelper);
+run(process.execPath, [path.join(root, 'scripts/check-prepared-depth.mjs'), app]);
 const subtitleScale = path.join(cache, `SubtitleScale-${architecture}.o`);
-run('/usr/bin/xcrun', ['clang', '-fobjc-arc', '-target', `${architecture}-apple-macosx13.0`, '-F', frameworks,
+run('/usr/bin/xcrun', ['clang', '-fobjc-arc', '-O2', '-target', `${architecture}-apple-macosx13.0`, '-F', frameworks,
                      '-I', path.join(vlckit, 'Headers'), '-I', path.join(vlckit, 'PrivateHeaders'),
                      '-c', path.join(root, 'macos/SubtitleScale.m'), '-o', subtitleScale]);
+const frameChecks = path.join(cache, 'check-video-frames');
+run('/usr/bin/xcrun', ['swiftc', '-parse-as-library', '-O', '-module-cache-path', path.join(cache, 'swift-modules'),
+                     '-F', frameworks, '-framework', 'VLCKit', '-import-objc-header', path.join(root, 'macos/SubtitleScale.h'),
+                     subtitleScale, path.join(root, 'macos/AIStereo.swift'), path.join(root, 'macos/checks/VideoFramesChecks.swift'),
+                     '-o', frameChecks]);
+run('/usr/bin/install_name_tool', ['-change', '@loader_path/../Frameworks/VLCKit.framework/Versions/A/VLCKit',
+                                 path.join(vlckit, 'Versions/A/VLCKit'), frameChecks]);
+run('/usr/bin/codesign', ['--force', '--sign', '-', frameChecks]);
+const frameFixture = path.join(cache, 'ai-playback-check.mp4');
+try {
+  run(path.join(runtime, 'ffmpeg'), ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=24',
+                                   '-t', '8', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-y', frameFixture]);
+  const before = createHash('sha256').update(fs.readFileSync(frameFixture)).digest('hex');
+  run(frameChecks, [frameFixture, path.join(resources, 'DepthAnythingV2SmallF16.mlmodelc')]);
+  if (createHash('sha256').update(fs.readFileSync(frameFixture)).digest('hex') !== before) throw new Error('AI playback modified its source file.');
+} finally { fs.rmSync(frameFixture, { force: true }); }
 run('/usr/bin/xcrun', ['swiftc', '-parse-as-library', '-swift-version', '5', '-O', '-target',
                      `${architecture}-apple-macosx13.0`,
                      '-module-cache-path', path.join(cache, 'swift-modules'),
-                     '-framework', 'AppKit', '-framework', 'WebKit',
+                     '-framework', 'AppKit', '-framework', 'WebKit', '-framework', 'CoreML', '-framework', 'CoreImage',
+                     '-framework', 'MetalKit', '-framework', 'CoreVideo',
                      '-F', frameworks, '-framework', 'VLCKit',
                      '-import-objc-header', path.join(root, 'macos/SubtitleScale.h'), subtitleScale,
-                     path.join(root, 'macos/Shoebox.swift'), path.join(root, 'macos/OriginalPlayer.swift'),
+                     path.join(root, 'macos/Shoebox.swift'), path.join(root, 'macos/OriginalPlayer.swift'), path.join(root, 'macos/StereoMode.swift'),
+                     path.join(root, 'macos/AIStereo.swift'),
+                     path.join(root, 'macos/PreparedDepthCache.swift'), path.join(root, 'macos/DepthPreparationSheet.swift'),
                      '-o', path.join(contents, 'MacOS/Shoebox')]);
 const nativeFiles = [];
 function collect(directory) {
